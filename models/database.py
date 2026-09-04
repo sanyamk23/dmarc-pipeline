@@ -1,67 +1,117 @@
-"""Async SQLAlchemy setup for DMARC report storage.
+"""Supabase client for DMARC report storage.
 
-Supports:
-- SQLite (local dev, file-based)
-- PostgreSQL (Neon, Render Postgres, production)
-
-Switch via DMARC_DATABASE_URL environment variable.
-
-Postgres URL format:
-    postgresql+asyncpg://user:pass@host/db?sslmode=require
+Uses the Supabase REST API (PostgREST) with service role key.
+Data persists in Supabase PostgreSQL and survives deploys.
 """
 
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
-
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.orm import DeclarativeBase
+import logging
+from typing import Any, Optional
 
 from config import settings
+from supabase import Client, create_client
 
-# ── Engine configuration ─────────────────────────────────────────────────────
+logger = logging.getLogger("dmarc.db")
 
-_is_postgres = settings.database_url.startswith(("postgresql://", "postgresql+asyncpg://"))
+# ── Supabase client ──────────────────────────────────────────────────────────
 
-_engine_kwargs: dict = {"future": True, "echo": False}
-
-if _is_postgres:
-    # Neon / Render Postgres: handle scale-to-zero and connection pooling
-    _engine_kwargs.update({
-        "pool_pre_ping": True,       # Check connection liveness before use
-        "pool_recycle": 300,         # Recycle connections every 5 min
-        "pool_size": 5,
-        "max_overflow": 10,
-    })
-
-engine = create_async_engine(settings.database_url, **_engine_kwargs)
-async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+_client: Optional[Client] = None
 
 
-class Base(DeclarativeBase):
-    """Declarative base for all ORM models."""
+def get_client() -> Client:
+    """Get or create the Supabase client singleton."""
+    global _client
+    if _client is None:
+        if not settings.supabase_url or not settings.supabase_service_role_key:
+            raise RuntimeError(
+                "SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set. "
+                "Get them from Supabase Dashboard → Settings → API."
+            )
+        _client = create_client(
+            settings.supabase_url,
+            settings.supabase_service_role_key,
+        )
+        logger.info("Supabase client initialized for %s", settings.supabase_url)
+    return _client
 
 
-async def init_db() -> None:
-    """Create all tables if they don't exist."""
-    from models import schemas  # noqa: F401  (import to register models)
-
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+# ── CRUD helpers ─────────────────────────────────────────────────────────────
 
 
-async def close_db() -> None:
-    """Dispose the engine — call on shutdown."""
-    await engine.dispose()
+async def select(
+    table: str,
+    columns: str = "*",
+    filters: Optional[dict[str, Any]] = None,
+    order: Optional[str] = None,
+    limit: Optional[int] = None,
+    count: Optional[str] = None,
+):
+    """Query rows from a table. Returns list[dict] or (list[dict], count) if count specified."""
+    client = get_client()
+    query = client.table(table).select(columns, count=count)
+
+    if filters:
+        for column, value in filters.items():
+            query = query.eq(column, value)
+
+    if order:
+        parts = order.split(".")
+        col = parts[0]
+        desc = len(parts) > 1 and parts[1].lower() == "desc"
+        query = query.order(col, desc=desc)
+
+    if limit:
+        query = query.limit(limit)
+
+    response = query.execute()
+    return response.data
 
 
-@asynccontextmanager
-async def session_scope():
-    """Provide a transactional scope around a series of operations."""
-    async with async_session() as session:
-        try:
-            yield session
-            await session.commit()
-        except Exception:
-            await session.rollback()
-            raise
+async def select_single(
+    table: str,
+    record_id: int,
+    columns: str = "*",
+) -> Optional[dict]:
+    """Get a single row by primary key."""
+    client = get_client()
+    response = client.table(table).select(columns).eq("id", record_id).single().execute()
+    return response.data
+
+
+async def insert(table: str, data: dict | list[dict]) -> list[dict]:
+    """Insert one or more rows."""
+    client = get_client()
+    response = client.table(table).insert(data).execute()
+    return response.data
+
+
+async def update(table: str, record_id: int, data: dict) -> dict:
+    """Update a row by primary key."""
+    client = get_client()
+    response = client.table(table).update(data).eq("id", record_id).execute()
+    return response.data[0] if response.data else {}
+
+
+async def delete(table: str, record_id: int) -> None:
+    """Delete a row by primary key."""
+    client = get_client()
+    client.table(table).delete().eq("id", record_id).execute()
+
+
+async def count(table: str, filters: Optional[dict] = None) -> int:
+    """Count rows in a table."""
+    client = get_client()
+    query = client.table(table).select("*", count="exact", head=True)
+    if filters:
+        for column, value in filters.items():
+            query = query.eq(column, value)
+    response = query.execute()
+    return response.count or 0
+
+
+async def rpc(function_name: str, params: Optional[dict] = None) -> Any:
+    """Call a Supabase Edge Function or database function."""
+    client = get_client()
+    response = client.rpc(function_name, params or {}).execute()
+    return response.data

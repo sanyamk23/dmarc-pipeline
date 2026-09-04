@@ -2,11 +2,16 @@
 
 Production entry point: ``gunicorn wsgi:app -k uvicorn.workers.UvicornWorker``
 Local dev: ``python -m cli serve`` or ``./run.sh``
+
+Data layer: Supabase REST API (PostgREST) with service role key.
+Tables: dmarc_reports, dmarc_records
 """
 
 from __future__ import annotations
 
+import json
 import logging
+import time
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -15,24 +20,22 @@ from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import func, select
 from starlette.requests import Request
 
-from analysis.engine import _build_analysis, get_analysis, get_report_analysis
+from analysis.engine import build_analysis_from_dicts
 from config import settings
 from models import (
-    Base,
-    DmarcRecord,
-    DmarcReport,
-    RecordRow,
-    ReportMetadata,
-    StatsSummary,
-    async_session,
-    engine,
-    init_db,
+    count,
+    delete,
+    get_client,
+    insert,
+    select,
+    select_single,
+    update,
 )
+from models.schemas import RecordRow, ReportMetadata, StatsSummary, UploadResponse
 from parsers.dmarc_xml import parse_dmarc_xml
-from workers.processor import process_file, process_existing_files
+from workers.processor import process_file
 
 logger = logging.getLogger("dmarc.api")
 
@@ -41,8 +44,6 @@ logger = logging.getLogger("dmarc.api")
 BASE_DIR = Path(__file__).resolve().parent.parent
 STATIC_DIR = BASE_DIR / "static"
 TEMPLATES_DIR = BASE_DIR / "templates"
-
-# Use configured reports directory (defaults to ./reports)
 REPORT_DROP_DIR = settings.reports_dir
 QUARANTINE_DIR = settings.quarantine_dir
 
@@ -59,13 +60,12 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Import here to ensure config is loaded before logging setup
     from logging_config import setup_logging
 
     setup_logging()
-    await init_db()
+    # Ensure Supabase client initializes (will raise if creds missing)
+    get_client()
     yield
-    await engine.dispose()
 
 
 app = FastAPI(
@@ -84,12 +84,9 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     """Structured request logging with timing."""
-    import time
-
     start = time.perf_counter()
     response = await call_next(request)
     duration_ms = (time.perf_counter() - start) * 1000
-
     logger.info(
         "%s %s → %d (%.1fms)",
         request.method,
@@ -110,14 +107,6 @@ async def health() -> dict:
     return {"status": "ok", "version": "1.0.0"}
 
 
-# ── Dependencies ──────────────────────────────────────────────────────────────
-
-
-async def get_session():
-    async with async_session() as session:
-        yield session
-
-
 # ── Dashboard ─────────────────────────────────────────────────────────────────
 
 
@@ -128,7 +117,6 @@ async def dashboard(request: Request):
 
 # ── Upload endpoint ───────────────────────────────────────────────────────────
 
-# Whitelisted extensions — reject everything else at the boundary
 ALLOWED_SUFFIXES = {".zip", ".xml", ".xml.gz", ".gz"}
 MAX_BYTES = settings.max_upload_size_mb * 1024 * 1024
 
@@ -145,7 +133,6 @@ async def upload_report(file: UploadFile = File(...)):
 
     Returns the list of extracted files plus per-file and collective analysis.
     """
-    # ── Input validation ───────────────────────────────────────────────────
     if not file.filename:
         raise HTTPException(status_code=400, detail="Missing filename")
 
@@ -165,61 +152,52 @@ async def upload_report(file: UploadFile = File(...)):
             detail=f"File exceeds {settings.max_upload_size_mb} MB limit",
         )
 
-    drop_dir = REPORT_DROP_DIR
-    drop_dir.mkdir(exist_ok=True)
-    target = drop_dir / file.filename
+    # Save to disk for processing
+    REPORT_DROP_DIR.mkdir(exist_ok=True)
+    target = REPORT_DROP_DIR / file.filename
     target.write_bytes(data)
 
+    # Process file using worker
     result = await process_file(target)
     if result is None:
-        return {"status": "error", "filename": file.filename}
+        return UploadResponse(status="error", filename=file.filename).model_dump()
 
     if result.is_duplicate:
-        return {
-            "status": "duplicate",
-            "filename": file.filename,
-            "extracted_files": result.extracted_files,
-            "skipped": result.skipped,
-        }
+        return UploadResponse(
+            status="duplicate",
+            filename=file.filename,
+            extracted_files=result.extracted_files,
+            skipped_duplicates=result.skipped,
+        ).model_dump()
 
-    # Build per-file analysis for each ingested report
+    # Build per-file analysis
     per_file_analysis = []
-    for report in result.reports:
-        analysis = await get_report_analysis(report.id)
+    for report_dict in result.reports:
+        analysis = build_analysis_from_dicts([report_dict], result.records_by_report)
         per_file_analysis.append({
-            "report_id": report.id,
-            "xml_filename": report.xml_filename,
-            "org_name": report.org_name,
-            "domain": report.domain,
-            "date_begin": report.date_begin,
-            "date_end": report.date_end,
+            "report_id": report_dict["id"],
+            "xml_filename": report_dict["xml_filename"],
+            "org_name": report_dict["org_name"],
+            "domain": report_dict["domain"],
+            "date_begin": report_dict["date_begin"],
+            "date_end": report_dict["date_end"],
             "analysis": analysis,
         })
 
-    # Build collective analysis across all newly-ingested reports
-    all_new_ids = [r.id for r in result.reports]
-    records_by_report: dict[int, list] = {}
-    async with async_session() as session:
-        from sqlalchemy import select
-        for rid in all_new_ids:
-            recs = (
-                await session.execute(
-                    select(DmarcRecord).where(DmarcRecord.report_id == rid)
-                )
-            ).scalars().all()
-            records_by_report[rid] = recs
+    # Build collective analysis
+    collective = build_analysis_from_dicts(
+        result.reports, result.records_by_report
+    )
 
-    collective = _build_analysis(result.reports, records_by_report)
-
-    return {
-        "status": "ingested",
-        "filename": file.filename,
-        "extracted_files": result.extracted_files,
-        "failed_files": result.failed,
-        "skipped_duplicates": result.skipped,
-        "per_file_analysis": per_file_analysis,
-        "collective_analysis": collective,
-    }
+    return UploadResponse(
+        status="ingested",
+        filename=file.filename,
+        extracted_files=result.extracted_files,
+        failed_files=result.failed,
+        skipped_duplicates=result.skipped,
+        per_file_analysis=per_file_analysis,
+        collective_analysis=collective,
+    ).model_dump()
 
 
 # ── Reports endpoints ─────────────────────────────────────────────────────────
@@ -232,137 +210,126 @@ async def list_reports(
     offset: int = Query(0, ge=0),
 ):
     """List report envelopes with pass/fail counts."""
-    async with async_session() as session:
-        stmt = select(DmarcReport)
-        if domain:
-            stmt = stmt.where(DmarcReport.domain == domain)
-        stmt = stmt.order_by(DmarcReport.date_end.desc()).limit(limit).offset(offset)
-        rows = (await session.execute(stmt)).scalars().all()
+    filters = {}
+    if domain:
+        filters["domain"] = domain
 
-        result: list[ReportMetadata] = []
-        for r in rows:
-            records = (
-                await session.execute(
-                    select(DmarcRecord).where(DmarcRecord.report_id == r.id)
-                )
-            ).scalars().all()
-            pass_count = sum(1 for rec in records if rec.dkim_aligned or rec.spf_aligned)
-            fail_count = len(records) - pass_count
-            result.append(
-                ReportMetadata(
-                    id=r.id,
-                    xml_filename=r.xml_filename,
-                    org_name=r.org_name,
-                    report_id=r.report_id,
-                    date_begin=r.date_begin,
-                    date_end=r.date_end,
-                    domain=r.domain,
-                    adkim=r.adkim,
-                    aspf=r.aspf,
-                    p=r.p,
-                    sp=r.sp,
-                    pct=r.pct,
-                    record_count=len(records),
-                    pass_count=pass_count,
-                    fail_count=fail_count,
-                    created_at=r.created_at,
-                )
+    rows = await select(
+        "dmarc_reports",
+        filters=filters if filters else None,
+        order="date_end.desc",
+        limit=limit,
+    )
+
+    result = []
+    for row in rows:
+        record_count = await count(
+            "dmarc_records", filters={"report_id": row["id"]}
+        )
+        pass_count = await count(
+            "dmarc_records",
+            filters={"report_id": row["id"]},  # We'll compute this in Python
+        )
+        # Get pass/fail from records
+        records = await select(
+            "dmarc_records",
+            filters={"report_id": row["id"]},
+        )
+        pass_fail = _compute_pass_fail(records)
+
+        result.append(
+            ReportMetadata(
+                id=row["id"],
+                xml_filename=row["xml_filename"],
+                org_name=row.get("org_name"),
+                report_id=row.get("report_id"),
+                date_begin=row.get("date_begin"),
+                date_end=row.get("date_end"),
+                domain=row.get("domain"),
+                adkim=row.get("adkim"),
+                aspf=row.get("aspf"),
+                p=row.get("p"),
+                sp=row.get("sp"),
+                pct=row.get("pct"),
+                record_count=record_count,
+                pass_count=pass_fail["pass"],
+                fail_count=pass_fail["fail"],
+                created_at=row.get("created_at"),
             )
-        return result
+        )
+    return result
+
+
+def _compute_pass_fail(records: list[dict]) -> dict:
+    """Compute pass/fail counts from record dicts."""
+    pass_count = 0
+    fail_count = 0
+    for rec in records:
+        dkim = rec.get("dkim_aligned") or False
+        spf = rec.get("spf_aligned") or False
+        if dkim or spf:
+            pass_count += 1
+        else:
+            fail_count += 1
+    return {"pass": pass_count, "fail": fail_count}
 
 
 @app.get("/api/reports/{report_id}", response_model=ReportMetadata)
 async def get_report(report_id: int):
-    async with async_session() as session:
-        row = await session.get(DmarcReport, report_id)
-        if row is None:
-            raise HTTPException(status_code=404, detail="Report not found")
+    row = await select_single("dmarc_reports", report_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Report not found")
 
-        records = (
-            await session.execute(
-                select(DmarcRecord).where(DmarcRecord.report_id == report_id)
-            )
-        ).scalars().all()
-        pass_count = sum(1 for rec in records if rec.dkim_aligned or rec.spf_aligned)
+    records = await select("dmarc_records", filters={"report_id": record_id})
+    pass_fail = _compute_pass_fail(records)
 
-        return ReportMetadata(
-            id=row.id,
-            xml_filename=row.xml_filename,
-            org_name=row.org_name,
-            report_id=row.report_id,
-            date_begin=row.date_begin,
-            date_end=row.date_end,
-            domain=row.domain,
-            adkim=row.adkim,
-            aspf=row.aspf,
-            p=row.p,
-            sp=row.sp,
-            pct=row.pct,
-            record_count=len(records),
-            pass_count=pass_count,
-            fail_count=len(records) - pass_count,
-            created_at=row.created_at,
-        )
+    return ReportMetadata(
+        id=row["id"],
+        xml_filename=row["xml_filename"],
+        org_name=row.get("org_name"),
+        report_id=row.get("report_id"),
+        date_begin=row.get("date_begin"),
+        date_end=row.get("date_end"),
+        domain=row.get("domain"),
+        adkim=row.get("adkim"),
+        aspf=row.get("aspf"),
+        p=row.get("p"),
+        sp=row.get("sp"),
+        pct=row.get("pct"),
+        record_count=len(records),
+        pass_count=pass_fail["pass"],
+        fail_count=pass_fail["fail"],
+        created_at=row.get("created_at"),
+    )
 
 
 @app.get("/api/reports/{report_id}/detail")
 async def get_report_detail(report_id: int):
     """Full detail for a single report — every field, every record, every auth result."""
-    import json
+    row = await select_single("dmarc_reports", report_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Report not found")
 
-    async with async_session() as session:
-        row = await session.get(DmarcReport, report_id)
-        if row is None:
-            raise HTTPException(status_code=404, detail="Report not found")
+    records = await select("dmarc_records", filters={"report_id": report_id})
 
-        records = (
-            await session.execute(
-                select(DmarcRecord).where(DmarcRecord.report_id == report_id)
-            )
-        ).scalars().all()
+    # Parse JSON auth fields
+    for rec in records:
+        if rec.get("dkim_auth_json"):
+            rec["dkim_auth"] = json.loads(rec["dkim_auth_json"])
+        else:
+            rec["dkim_auth"] = []
+        if rec.get("spf_auth_json"):
+            rec["spf_auth"] = json.loads(rec["spf_auth_json"])
+        else:
+            rec["spf_auth"] = []
 
-        analysis = await get_report_analysis(report_id)
+    analysis = build_analysis_from_dicts([row], {row["id"]: records})
 
-        return {
-            "report": {
-                "id": row.id,
-                "xml_filename": row.xml_filename,
-                "archive_filename": row.archive_filename,
-                "org_name": row.org_name,
-                "org_email": row.org_email,
-                "report_id": row.report_id,
-                "date_begin": row.date_begin,
-                "date_end": row.date_end,
-                "domain": row.domain,
-                "adkim": row.adkim,
-                "aspf": row.aspf,
-                "p": row.p,
-                "sp": row.sp,
-                "pct": row.pct,
-                "created_at": row.created_at,
-            },
-            "records": [
-                {
-                    "id": rec.id,
-                    "source_ip": rec.source_ip,
-                    "count": rec.count,
-                    "header_from": rec.header_from,
-                    "envelope_from": rec.envelope_from,
-                    "envelope_to": rec.envelope_to,
-                    "disposition": rec.disposition,
-                    "dkim_aligned": rec.dkim_aligned,
-                    "spf_aligned": rec.spf_aligned,
-                    "dkim_result": rec.dkim_result,
-                    "spf_result": rec.spf_result,
-                    "dkim_domain": rec.dkim_domain,
-                    "spf_domain": rec.spf_domain,
-                    "dkim_auth": json.loads(rec.dkim_auth_json) if rec.dkim_auth_json else [],
-                    "spf_auth": json.loads(rec.spf_auth_json) if rec.spf_auth_json else [],
-                }
-                for rec in records
-            ],
-            "analysis": analysis,
-        }
+    return {
+        "report": row,
+        "records": records,
+        "analysis": analysis,
+    }
 
 
 # ── Records endpoints ─────────────────────────────────────────────────────────
@@ -376,23 +343,23 @@ async def list_records(
     result: str | None = Query(None, description="Filter: pass or fail"),
     limit: int = Query(200, ge=1, le=2000),
 ):
-    async with async_session() as session:
-        stmt = select(DmarcRecord).where(DmarcRecord.report_id == report_id)
-        if source_ip:
-            stmt = stmt.where(DmarcRecord.source_ip == source_ip)
-        if header_from:
-            stmt = stmt.where(DmarcRecord.header_from == header_from)
-        if result == "pass":
-            stmt = stmt.where(
-                (DmarcRecord.dkim_aligned == True) | (DmarcRecord.spf_aligned == True)  # noqa: E712
-            )
-        elif result == "fail":
-            stmt = stmt.where(
-                (DmarcRecord.dkim_aligned == False) & (DmarcRecord.spf_aligned == False)  # noqa: E712
-            )
-        stmt = stmt.limit(limit)
-        rows = (await session.execute(stmt)).scalars().all()
-        return [RecordRow.model_validate(r) for r in rows]
+    filters = {"report_id": report_id}
+    if source_ip:
+        filters["source_ip"] = source_ip
+    if header_from:
+        filters["header_from"] = header_from
+
+    rows = await select("dmarc_records", filters=filters, limit=limit)
+
+    # Post-filter for pass/fail (Supabase-py doesn't support OR easily)
+    if result == "pass":
+        rows = [r for r in rows if r.get("dkim_aligned") or r.get("spf_aligned")]
+    elif result == "fail":
+        rows = [
+            r for r in rows if not r.get("dkim_aligned") and not r.get("spf_aligned")
+        ]
+
+    return [RecordRow(**r) for r in rows]
 
 
 # ── Statistics ────────────────────────────────────────────────────────────────
@@ -400,92 +367,35 @@ async def list_records(
 
 @app.get("/api/stats", response_model=StatsSummary)
 async def stats(domain: str | None = None):
-    async with async_session() as session:
-        report_stmt = select(func.count(DmarcReport.id))
-        record_stmt = select(
-            func.count(DmarcRecord.id), func.coalesce(func.sum(DmarcRecord.count), 0)
-        )
-        if domain:
-            # Join records → reports to filter by domain
-            record_stmt = record_stmt.join(DmarcReport).where(
-                DmarcReport.domain == domain
-            )
-            report_stmt = report_stmt.where(DmarcReport.domain == domain)
+    # Get all reports (optionally filtered)
+    filters = {}
+    if domain:
+        filters["domain"] = domain
 
-        total_reports = (await session.execute(report_stmt)).scalar_one()
-        total_records, total_messages = (await session.execute(record_stmt)).one()
+    reports = await select("dmarc_reports", filters=filters if filters else None)
+    records = await select("dmarc_records")
 
-        # Pass/fail counts
-        pass_stmt = select(func.count(DmarcRecord.id)).where(
-            (DmarcRecord.dkim_aligned == True) | (DmarcRecord.spf_aligned == True)  # noqa: E712
-        )
-        fail_stmt = select(func.count(DmarcRecord.id)).where(
-            (DmarcRecord.dkim_aligned == False) & (DmarcRecord.spf_aligned == False)  # noqa: E712
-        )
-        dkim_pass = await session.execute(
-            select(func.count(DmarcRecord.id)).where(DmarcRecord.dkim_aligned == True)  # noqa: E712
-        )
-        spf_pass = await session.execute(
-            select(func.count(DmarcRecord.id)).where(DmarcRecord.spf_aligned == True)  # noqa: E712
-        )
+    # Build analysis
+    records_by_report = defaultdict(list)
+    for rec in records:
+        records_by_report[rec["report_id"]].append(rec)
 
-        pass_count = (await session.execute(pass_stmt)).scalar_one()
-        fail_count = (await session.execute(fail_stmt)).scalar_one()
-        dkim_pass_count = dkim_pass.scalar_one()
-        spf_pass_count = spf_pass.scalar_one()
+    analysis = build_analysis_from_dicts(reports, records_by_report)
 
-        # Top source IPs
-        top_ips = await session.execute(
-            select(DmarcRecord.source_ip, func.sum(DmarcRecord.count).label("total"))
-            .group_by(DmarcRecord.source_ip)
-            .order_by(func.sum(DmarcRecord.count).desc())
-            .limit(10)
-        )
-        top_source_ips = [
-            {"ip": ip, "count": int(count)} for ip, count in top_ips.all() if ip
-        ]
-
-        # Top header_from domains
-        top_from = await session.execute(
-            select(DmarcRecord.header_from, func.sum(DmarcRecord.count).label("total"))
-            .group_by(DmarcRecord.header_from)
-            .order_by(func.sum(DmarcRecord.count).desc())
-            .limit(10)
-        )
-        top_header_froms = [
-            {"domain": d, "count": int(c)} for d, c in top_from.all() if d
-        ]
-
-        # Per-domain pass rates
-        per_domain = await session.execute(
-            select(
-                DmarcReport.domain,
-                func.count(DmarcRecord.id),
-                func.coalesce(func.sum(DmarcRecord.count), 0),
-            )
-            .join(DmarcRecord, DmarcRecord.report_id == DmarcReport.id)
-            .group_by(DmarcReport.domain)
-        )
-        per_domain_data = [
-            {"domain": d, "records": int(r), "messages": int(m)}
-            for d, r, m in per_domain.all()
-            if d
-        ]
-
-        return StatsSummary(
-            total_reports=total_reports,
-            total_records=total_records,
-            total_messages=int(total_messages),
-            pass_count=pass_count,
-            fail_count=fail_count,
-            dkim_pass=dkim_pass_count,
-            dkim_fail=total_records - dkim_pass_count,
-            spf_pass=spf_pass_count,
-            spf_fail=total_records - spf_pass_count,
-            top_source_ips=top_source_ips,
-            top_header_froms=top_header_froms,
-            per_domain=per_domain_data,
-        )
+    return StatsSummary(
+        total_reports=analysis["overall"]["total_reports"],
+        total_records=analysis["overall"]["total_records"],
+        total_messages=analysis["overall"]["total_messages"],
+        pass_count=analysis["alignment"]["either_pass"],
+        fail_count=analysis["alignment"]["both_fail"],
+        dkim_pass=analysis["alignment"]["dkim_pass"],
+        dkim_fail=analysis["alignment"]["dkim_fail"],
+        spf_pass=analysis["alignment"]["spf_pass"],
+        spf_fail=analysis["alignment"]["spf_fail"],
+        top_source_ips=analysis.get("top_ips", []),
+        top_header_froms=analysis.get("top_header_froms", []),
+        per_domain=analysis.get("per_domain", []),
+    )
 
 
 # ── Analysis endpoint ─────────────────────────────────────────────────────────
@@ -494,18 +404,22 @@ async def stats(domain: str | None = None):
 @app.get("/api/analysis")
 async def analysis():
     """Full analysis report across all ingested DMARC data."""
-    return await get_analysis()
+    reports = await select("dmarc_reports")
+    records = await select("dmarc_records")
+
+    records_by_report = defaultdict(list)
+    for rec in records:
+        records_by_report[rec["report_id"]].append(rec)
+
+    return build_analysis_from_dicts(reports, records_by_report)
 
 
-# ── Analysis page ─────────────────────────────────────────────────────────────
+# ── Pages ─────────────────────────────────────────────────────────────────────
 
 
 @app.get("/analysis", response_class=HTMLResponse, include_in_schema=False)
 async def analysis_page(request: Request):
     return templates.TemplateResponse("analysis.html", {"request": request})
-
-
-# ── File detail page ──────────────────────────────────────────────────────────
 
 
 @app.get("/file/{report_id}", response_class=HTMLResponse, include_in_schema=False)

@@ -1,16 +1,16 @@
-"""File ingestion worker — unzips DMARC reports and persists parsed data.
+"""File ingestion worker — unzips DMARC reports and persists to Supabase.
 
-This is the "pipeline" entry point: feed it a ``.zip``/``.xml``/``.xml.gz``
-file and it extracts the XML, parses it with :mod:`parsers.dmarc_xml`, and
-writes the report metadata + records into SQLite via SQLAlchemy.
+Flow: .zip/.xml/.xml.gz → extract XML → parse → insert into Supabase tables
+(dmarc_reports, dmarc_records).
 
-Idempotency is enforced on ``report_id`` (from the XML envelope) — re-running
-on the same file is a safe no-op rather than a duplicate.
+Idempotency is enforced on ``report_id`` — re-running on the same report
+is a safe no-op rather than a duplicate.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json as _json
 import logging
 import zipfile
 from dataclasses import dataclass, field
@@ -18,15 +18,14 @@ from pathlib import Path
 
 import aiofiles
 
-from models import DmarcRecord, DmarcReport, async_session
+from config import settings
+from models import insert, select
 from parsers.dmarc_xml import DmarcReport as ParsedReport, parse_dmarc_xml
 
 logger = logging.getLogger("dmarc.processor")
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
-
-import json as _json
 
 
 def _pick_dkim_domain(dkim_auth: list, reported_domain: str | None) -> str | None:
@@ -50,11 +49,13 @@ def _pick_dkim_domain(dkim_auth: list, reported_domain: str | None) -> str | Non
 @dataclass
 class IngestResult:
     """Detailed result of ingesting one upload (zip / xml / xml.gz)."""
+
     archive_name: str
     extracted_files: list[str] = field(default_factory=list)
-    reports: list[DmarcReport] = field(default_factory=list)
-    skipped: list[str] = field(default_factory=list)  # duplicate report_ids
-    failed: list[str] = field(default_factory=list)  # unparseable xml names
+    reports: list[dict] = field(default_factory=list)
+    records_by_report: dict[int, list[dict]] = field(default_factory=dict)
+    skipped: list[str] = field(default_factory=list)
+    failed: list[str] = field(default_factory=list)
 
     @property
     def is_duplicate(self) -> bool:
@@ -62,16 +63,7 @@ class IngestResult:
 
 
 async def process_file(path: Path) -> IngestResult | None:
-    """Ingest a single DMARC report file.
-
-    Supported input:
-        * ``.zip`` containing one or more XML files
-        * ``.xml`` plain
-        * ``.xml.gz`` gzip-compressed
-
-    Returns an :class:`IngestResult` with extracted filenames and persisted rows,
-    or ``None`` if the file could not be read at all.
-    """
+    """Ingest a single DMARC report file into Supabase."""
     path = Path(path)
     if not path.exists():
         logger.warning("File not found: %s", path)
@@ -97,11 +89,18 @@ async def process_file(path: Path) -> IngestResult | None:
             logger.error("Failed to parse %s: %s", xml_name, exc)
             result.failed.append(xml_name)
             continue
-        row = await _persist(
-            path.name, xml_name, xml_bytes.decode("utf-8", errors="replace"), parsed
-        )
-        if row is not None:
-            result.reports.append(row)
+
+        report_id = await _persist(parsed, archive_name=path.name, xml_name=xml_name)
+        if report_id is not None:
+            # Fetch the inserted report dict for analysis
+            inserted = await select("dmarc_reports", filters={"id": report_id})
+            if inserted:
+                result.reports.append(inserted[0])
+                # Fetch inserted records
+                records = await select(
+                    "dmarc_records", filters={"report_id": report_id}
+                )
+                result.records_by_report[report_id] = records
         else:
             result.skipped.append(parsed.metadata.report_id or xml_name)
 
@@ -115,7 +114,7 @@ async def process_existing_files(directory: Path) -> int:
     for ext in ("*.zip", "*.xml", "*.xml.gz"):
         for path in sorted(directory.glob(ext)):
             result = await process_file(path)
-            if result is not None and (result.reports or result.failed):
+            if result is not None and result.reports:
                 count += len(result.reports)
     return count
 
@@ -124,8 +123,7 @@ async def process_existing_files(directory: Path) -> int:
 
 
 async def _extract_all_xml(path: Path) -> list[tuple[bytes, str]]:
-    """Return a list of ``(xml_bytes, original_xml_filename)`` from any supported
-    input. A zip may contain multiple XML files — all are returned."""
+    """Return XML content from any supported input (zip/xml/gz)."""
     suffix = path.suffix.lower()
 
     if suffix == ".zip":
@@ -158,88 +156,92 @@ def _sync_extract_all_xml(path: Path) -> list[tuple[bytes, str]]:
 
 
 async def _persist(
-    archive_name: str, xml_name: str, raw_xml: str, parsed: ParsedReport
-) -> DmarcReport | None:
-    """Persist a parsed report, idempotent on report_id."""
+    parsed: ParsedReport, archive_name: str, xml_name: str
+) -> int | None:
+    """Persist a parsed report to Supabase. Returns the new report ID."""
     policy = parsed.metadata.policy
     report_id = parsed.metadata.report_id
 
-    async with async_session() as session:
-        from sqlalchemy import select
-
-        # Idempotency guard — skip if we've already ingested this report_id
-        if report_id:
-            existing = await session.execute(
-                select(DmarcReport).where(DmarcReport.report_id == report_id)
-            )
-            if existing.scalar_one_or_none() is not None:
-                logger.info("Skipping duplicate report_id=%s", report_id)
-                return None
-
-        # Resolve domain: prefer the published policy domain, fall back to header_from
-        domain = policy.domain
-        if not domain and parsed.records:
-            domain = parsed.records[0].header_from
-
-        row = DmarcReport(
-            xml_filename=xml_name,
-            archive_filename=archive_name,
-            org_name=parsed.metadata.org_name,
-            org_email=parsed.metadata.org_email,
-            report_id=report_id,
-            date_begin=parsed.metadata.date_begin,
-            date_end=parsed.metadata.date_end,
-            domain=domain,
-            adkim=policy.adkim,
-            aspf=policy.aspf,
-            p=policy.p,
-            sp=policy.sp,
-            pct=policy.pct,
-            raw_xml=raw_xml,
+    # Idempotency guard — skip if we've already ingested this report_id
+    if report_id:
+        existing = await select(
+            "dmarc_reports", filters={"report_id": report_id}, limit=1
         )
-        session.add(row)
-        await session.flush()  # populate row.id
+        if existing:
+            logger.info("Skipping duplicate report_id=%s", report_id)
+            return None
 
-        # Bulk-insert records for this report
-        orm_records = [
-            DmarcRecord(
-                report_id=row.id,
-                source_ip=r.source_ip,
-                count=r.count or 0,
-                header_from=r.header_from,
-                envelope_from=r.envelope_from,
-                envelope_to=r.envelope_to,
-                disposition=r.disposition,
-                dkim_aligned=r.dkim_aligned,
-                spf_aligned=r.spf_aligned,
-                dkim_result=r.dkim_result,
-                spf_result=r.spf_result,
-                dkim_domain=_pick_dkim_domain(r.dkim_auth, domain),
-                spf_domain=r.spf_auth[0].domain if r.spf_auth else None,
-                dkim_auth_json=_json.dumps([
-                    {"domain": d.domain, "result": d.result, "selector": d.selector}
-                    for d in r.dkim_auth
-                ]),
-                spf_auth_json=_json.dumps([
-                    {"domain": s.domain, "result": s.result, "scope": s.scope}
-                    for s in r.spf_auth
-                ]),
-            )
-            for r in parsed.records
-        ]
-        session.add_all(orm_records)
-        await session.commit()
+    # Resolve domain
+    domain = policy.domain
+    if not domain and parsed.records:
+        domain = parsed.records[0].header_from
 
-        logger.info(
-            "Stored report_id=%s with %d records", report_id, len(orm_records)
-        )
-        return row
+    # Insert report
+    report_data = {
+        "xml_filename": xml_name,
+        "archive_filename": archive_name,
+        "org_name": parsed.metadata.org_name,
+        "org_email": parsed.metadata.org_email,
+        "report_id": report_id,
+        "date_begin": parsed.metadata.date_begin.isoformat() if parsed.metadata.date_begin else None,
+        "date_end": parsed.metadata.date_end.isoformat() if parsed.metadata.date_end else None,
+        "domain": domain,
+        "adkim": policy.adkim,
+        "aspf": policy.aspf,
+        "p": policy.p,
+        "sp": policy.sp,
+        "pct": policy.pct,
+        "raw_xml": parsed.metadata.report_id,  # Don't store raw XML in Supabase (save space)
+    }
+
+    inserted = await insert("dmarc_reports", report_data)
+    if not inserted:
+        logger.error("Failed to insert report")
+        return None
+
+    new_id = inserted[0]["id"]
+
+    # Bulk-insert records for this report
+    records_data = []
+    for r in parsed.records:
+        records_data.append({
+            "report_id": new_id,
+            "source_ip": r.source_ip,
+            "count": r.count or 0,
+            "header_from": r.header_from,
+            "envelope_from": r.envelope_from,
+            "envelope_to": r.envelope_to,
+            "disposition": r.disposition,
+            "dkim_aligned": r.dkim_aligned,
+            "spf_aligned": r.spf_aligned,
+            "dkim_result": r.dkim_result,
+            "spf_result": r.spf_result,
+            "dkim_domain": _pick_dkim_domain(r.dkim_auth, domain),
+            "spf_domain": r.spf_auth[0].domain if r.spf_auth else None,
+            "dkim_auth_json": _json.dumps([
+                {"domain": d.domain, "result": d.result, "selector": d.selector}
+                for d in r.dkim_auth
+            ]),
+            "spf_auth_json": _json.dumps([
+                {"domain": s.domain, "result": s.result, "scope": s.scope}
+                for s in r.spf_auth
+            ]),
+        })
+
+    if records_data:
+        await insert("dmarc_records", records_data)
+
+    logger.info(
+        "Stored report_id=%s with %d records (Supabase ID: %s)",
+        report_id,
+        len(records_data),
+        new_id,
+    )
+    return new_id
 
 
 def _quarantine(path: Path) -> None:
     """Move an unprocessable file aside so it doesn't block future runs."""
-    from config import settings
-
     quarantine_dir = settings.quarantine_dir
     quarantine_dir.mkdir(parents=True, exist_ok=True)
     target = quarantine_dir / path.name

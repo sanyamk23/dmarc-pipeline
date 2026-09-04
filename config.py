@@ -18,6 +18,12 @@ class Settings(BaseSettings):
 
     # ── Storage ───────────────────────────────────────────────────────────────
     database_url: str = f"sqlite+aiosqlite:///{BASE_DIR / 'dmarc_reports.db'}"
+
+    # ── Supabase (production) ─────────────────────────────────────────────────
+    supabase_url: str = ""
+    supabase_service_role_key: str = ""
+    supabase_anon_key: str = ""
+
     reports_dir: Path = BASE_DIR / "reports"
     quarantine_dir: Path = BASE_DIR / "quarantine"
     max_upload_size_mb: int = 50

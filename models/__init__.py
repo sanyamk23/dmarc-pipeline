@@ -1,20 +1,22 @@
-from models.database import Base, engine, async_session, init_db
+from models.database import get_client, select, select_single, insert, update, delete, count, rpc
 from models.schemas import (
-    DmarcReport,
-    DmarcRecord,
     ReportMetadata,
     RecordRow,
     StatsSummary,
+    UploadResponse,
 )
 
 __all__ = [
-    "Base",
-    "engine",
-    "async_session",
-    "init_db",
-    "DmarcReport",
-    "DmarcRecord",
+    "get_client",
+    "select",
+    "select_single",
+    "insert",
+    "update",
+    "delete",
+    "count",
+    "rpc",
     "ReportMetadata",
     "RecordRow",
     "StatsSummary",
+    "UploadResponse",
 ]
