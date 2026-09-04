@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Analysis — DMARC Pipeline</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <!-- ── Top bar ─────────────────────────────────────────────────────────── -->
+  <header class="topbar">
+    <div class="topbar-brand">
+      <div class="topbar-logo">D</div>
+      <span>DMARC Pipeline</span>
+    </div>
+    <nav class="topbar-nav">
+      <a href="/">Dashboard</a>
+      <a href="/analysis" class="active">Analysis</a>
+    </nav>
+  </header>
+
+  <div class="container">
+    <!-- ── Health score hero ───────────────────────────────────────────────── -->
+    <section class="card" id="health-card">
+      <div class="card-body">
+        <div style="display: grid; grid-template-columns: auto 1fr; gap: var(--sp-6); align-items: center;">
+          <div id="health-ring" style="--score: 0;">
+            <span id="health-score">–</span>
+            <small>health</small>
+          </div>
+          <div>
+            <h2 style="font-family: var(--font-display); font-size: 20px; font-weight: 600; margin-bottom: var(--sp-2);">
+              DMARC Health Report
+            </h2>
+            <p id="summary-text" style="color: var(--muted); max-width: 70ch;">
+              Loading analysis…
+            </p>
+            <div id="health-meta" style="margin-top: var(--sp-3); font-family: var(--font-utility); font-size: 12px; color: var(--subtle);"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Alignment overview ──────────────────────────────────────────────── -->
+    <div class="stat-strip" id="alignment-strip">
+      <div class="stat-cell">
+        <div class="stat-label">DKIM pass</div>
+        <div class="stat-value success" id="dkim-pass">–</div>
+        <div class="stat-sub" id="dkim-rate">–</div>
+      </div>
+      <div class="stat-cell">
+        <div class="stat-label">SPF pass</div>
+        <div class="stat-value success" id="spf-pass">–</div>
+        <div class="stat-sub" id="spf-rate">–</div>
+      </div>
+      <div class="stat-cell">
+        <div class="stat-label">Both pass</div>
+        <div class="stat-value" id="both-pass">–</div>
+        <div class="stat-sub">fully aligned</div>
+      </div>
+      <div class="stat-cell">
+        <div class="stat-label">Either pass</div>
+        <div class="stat-value accent" id="either-pass">–</div>
+        <div class="stat-sub" id="either-rate">DMARC compliant</div>
+      </div>
+      <div class="stat-cell">
+        <div class="stat-label">Both fail</div>
+        <div class="stat-value danger" id="both-fail">–</div>
+        <div class="stat-sub">action required</div>
+      </div>
+    </div>
+
+    <!-- ── Recommendations ─────────────────────────────────────────────────── -->
+    <section class="card" id="recommendations-card">
+      <div class="card-header">
+        <div class="card-title">Recommendations</div>
+        <span class="badge info">actionable</span>
+      </div>
+      <div id="recommendations" class="card-body"></div>
+    </section>
+
+    <!-- ── Per-domain breakdown ────────────────────────────────────────────── -->
+    <section class="card">
+      <div class="card-header">
+        <div class="card-title">Per-domain breakdown</div>
+      </div>
+      <div class="table-wrap">
+        <table id="domains-table">
+          <thead>
+            <tr>
+              <th>Domain</th>
+              <th>Messages</th>
+              <th>Records</th>
+              <th>DKIM</th>
+              <th>SPF</th>
+              <th>Both fail</th>
+              <th>Pass rate</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ── Top source IPs ──────────────────────────────────────────────────── -->
+    <section class="card">
+      <div class="card-header">
+        <div class="card-title">Top source IPs</div>
+        <span class="badge warn">by volume</span>
+      </div>
+      <div class="table-wrap">
+        <table id="ips-table">
+          <thead>
+            <tr>
+              <th>IP</th>
+              <th>Messages</th>
+              <th>DKIM</th>
+              <th>SPF</th>
+              <th>Disposition</th>
+              <th>Domains</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ── Sending services ────────────────────────────────────────────────── -->
+    <section class="card">
+      <div class="card-header">
+        <div class="card-title">Sending services</div>
+      </div>
+      <div id="services" class="card-body"></div>
+    </section>
+
+    <!-- ── Disposition breakdown ───────────────────────────────────────────── -->
+    <section class="card">
+      <div class="card-header">
+        <div class="card-title">Disposition breakdown</div>
+      </div>
+      <div id="dispositions" class="card-body"></div>
+    </section>
+  </div>
+
+  <script src="/static/analysis.js"></script>
+</body>
+</html>

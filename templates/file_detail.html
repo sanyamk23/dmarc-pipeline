@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>File Detail — DMARC Pipeline</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-brand">
+      <div class="topbar-logo">D</div>
+      <span>DMARC Pipeline</span>
+    </div>
+    <nav class="topbar-nav">
+      <a href="/">Dashboard</a>
+      <a href="/analysis">Analysis</a>
+    </nav>
+  </header>
+
+  <div class="container">
+    <!-- ── Breadcrumb ──────────────────────────────────────────────────────── -->
+    <div style="margin-bottom: var(--sp-4); font-family: var(--font-utility); font-size: 12px; color: var(--muted);">
+      <a href="/" style="color: var(--muted);">Dashboard</a> → <span id="detail-filename">…</span>
+    </div>
+
+    <!-- ── Report metadata ─────────────────────────────────────────────────── -->
+    <section class="card">
+      <div class="card-header">
+        <div class="card-title">Report metadata</div>
+        <span id="detail-org" class="badge info"></span>
+      </div>
+      <div class="card-body">
+        <div class="detail-grid" id="metadata-grid"></div>
+      </div>
+    </section>
+
+    <!-- ── Policy published ────────────────────────────────────────────────── -->
+    <section class="card">
+      <div class="card-header">
+        <div class="card-title">Policy published</div>
+      </div>
+      <div class="card-body">
+        <div class="detail-grid" id="policy-grid"></div>
+      </div>
+    </section>
+
+    <!-- ── Authentication alignment summary ─────────────────────────────────── -->
+    <section class="card">
+      <div class="card-header">
+        <div class="card-title">Authentication alignment</div>
+        <span id="detail-health-badge" class="badge">–</span>
+      </div>
+      <div class="card-body">
+        <div id="alignment-summary"></div>
+      </div>
+    </section>
+
+    <!-- ── Records (every single one, fully expanded) ──────────────────────── -->
+    <section class="card">
+      <div class="card-header">
+        <div class="card-title">All records</div>
+        <span id="detail-record-count" class="badge info">0 records</span>
+      </div>
+      <div id="records-container"></div>
+    </section>
+  </div>
+
+  <script src="/static/file_detail.js"></script>
+</body>
+</html>

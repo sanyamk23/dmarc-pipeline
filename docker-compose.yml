@@ -1,0 +1,26 @@
+services:
+  dmarc:
+    build: .
+    image: dmarc-pipeline:latest
+    container_name: dmarc-pipeline
+    ports:
+      - "8000:8000"
+    environment:
+      - DMARC_HOST=0.0.0.0
+      - DMARC_PORT=8000
+      - DMARC_LOG_LEVEL=INFO
+      - DMARC_WATCH_FOLDER=true
+      - DMARC_WORKER_COUNT=2
+    volumes:
+      - dmarc_data:/app/data
+      - ./reports:/app/reports
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  dmarc_data:
