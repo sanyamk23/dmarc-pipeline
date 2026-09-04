@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DMARC Analyzer</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-brand">
+      <div class="topbar-logo">D</div>
+      <span>DMARC Analyzer</span>
+    </div>
+    <span class="badge info">100% free · runs in your browser</span>
+  </header>
+
+  <div class="container">
+    <!-- ── Story ─────────────────────────────────────────────────────────── -->
+    <section class="card" style="border-color: var(--accent); margin-bottom: var(--sp-6);">
+      <div class="card-body">
+        <h2 style="font-family: var(--font-display); font-size: 20px; margin-bottom: var(--sp-3);">
+          Your DMARC reports. Fully analyzed. Zero servers.
+        </h2>
+        <p style="color: var(--muted); max-width: 65ch;">
+          Drop your <code>.zip</code> / <code>.xml</code> / <code>.xml.gz</code> files.
+          Every byte is parsed locally in your browser. Nothing leaves your machine.
+          Your data never touches a server.
+        </p>
+      </div>
+    </section>
+
+    <!-- ── Upload ────────────────────────────────────────────────────────── -->
+    <section id="upload" class="card upload-card">
+      <div class="card-header">
+        <div class="card-title">Analyze report</div>
+        <span class="badge info">.zip / .xml / .xml.gz</span>
+      </div>
+      <div class="card-body">
+        <div id="drop-zone" class="drop-zone">
+          <div class="drop-zone-content">
+            <span class="drop-icon">📬</span>
+            <span class="drop-text">Drop your DMARC report here</span>
+            <span class="drop-or">or use the file picker</span>
+            <label class="browse-btn">
+              Browse files
+              <input type="file" id="file-input" accept=".zip,.xml,.xml.gz" multiple hidden />
+            </label>
+            <p id="file-name" class="file-name"></p>
+          </div>
+        </div>
+        <div id="upload-status" class="status" style="margin-top: var(--sp-3);"></div>
+      </div>
+    </section>
+
+    <!-- ── Results ───────────────────────────────────────────────────────── -->
+    <div id="results"></div>
+  </div>
+
+  <!-- Libraries loaded from CDN -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <script src="/static/analyzer.js"></script>
+</body>
+</html>

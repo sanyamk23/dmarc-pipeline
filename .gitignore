@@ -1,41 +1,21 @@
 # Python
 __pycache__/
 *.py[cod]
-*$py.class
-*.so
-.Python
 .venv/
 venv/
-env/
-ENV/
 
 # Database
 *.db
 *.sqlite
 *.sqlite3
 
-# Local dev artifacts
-.agents/
-.claude/
-.ulpi/
-skills-lock.json
-
-# Reports & quarantine (user data)
+# Local data
 reports/
 quarantine/
-uploads/
 
-# OS files
+# OS
 .DS_Store
-Thumbs.db
 
-# IDE
-.vscode/
-.idea/
-
-# Logs
-*.log
-
-# Local env files
+# Env
 .env
 .env.local
