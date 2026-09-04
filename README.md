@@ -1,5 +1,7 @@
 # DMARC Report Pipeline
 
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/sanyamk23/dmarc-pipeline)
+
 A self-hosted pipeline + web application for ingesting, analyzing, and browsing
 DMARC aggregate reports. Drop a `.zip`, `.xml`, or `.xml.gz` report and get a
 complete breakdown of your email authentication health.
