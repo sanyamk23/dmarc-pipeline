@@ -1,0 +1,22 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# Render.com deployment configuration
+# Deploy: https://render.com/deploy?repo=https://github.com/sanyamk23/dmarc-pipeline
+# ═══════════════════════════════════════════════════════════════════════════
+
+services:
+  - type: web
+    name: dmarc-pipeline
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn wsgi:app -w 2 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:$PORT
+    envVars:
+      - key: DMARC_PORT
+        value: "10000"
+      - key: DMARC_WATCH_FOLDER
+        value: "true"
+      - key: DMARC_LOG_LEVEL
+        value: "INFO"
+      - key: PYTHON_VERSION
+        value: "3.12.10"
+    healthCheckPath: /health
