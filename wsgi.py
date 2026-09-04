@@ -1,13 +1,15 @@
-"""Production entry point — used by Gunicorn/Uvicorn in containers."""
+"""Production entry point — used by Gunicorn on Render.
 
-import uvicorn
+Gunicorn runs: gunicorn wsgi:app
+So this module must expose `app` at the top level.
+"""
 
-from config import settings
+import os
+import sys
 
-if __name__ == "__main__":
-    uvicorn.run(
-        "api.main:app",
-        host=settings.host,
-        port=settings.port,
-        log_level=settings.log_level.lower(),
-    )
+# Ensure the project root is on sys.path so `api`, `models`, etc. resolve
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from api.main import app  # noqa: E402  (import after sys.path fix)
+
+__all__ = ["app"]
