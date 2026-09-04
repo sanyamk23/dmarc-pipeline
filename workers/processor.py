@@ -64,8 +64,6 @@ class IngestResult:
 
 def process_file(path: Path) -> IngestResult | None:
     """Ingest a single DMARC report file into Supabase."""
-    import asyncio
-
     path = Path(path)
     if not path.exists():
         logger.warning("File not found: %s", path)
@@ -76,7 +74,7 @@ def process_file(path: Path) -> IngestResult | None:
 
     # Collect all (xml_bytes, xml_name) pairs from this file
     try:
-        xml_entries = asyncio.run(_extract_all_xml(path))
+        xml_entries = _extract_all_xml(path)
     except Exception as exc:
         logger.error("Failed to extract XML from %s: %s", path.name, exc)
         _quarantine(path)
