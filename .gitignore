@@ -16,6 +16,5 @@ quarantine/
 # OS
 .DS_Store
 
-# Env
-.env
+# Env (keep .env for local dev, ignore local overrides)
 .env.local
