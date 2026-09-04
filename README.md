@@ -18,6 +18,25 @@ Ingest, analyze, and browse DMARC aggregate reports. Drop a `.zip`, `.xml`, or
 | Start command | `gunicorn wsgi:app -w 2 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:$PORT` |
 | Plan | Free |
 
+## Persistent data (optional, recommended)
+
+By default the app uses SQLite (resets on deploy). For permanent storage that
+survives deploys and can scale:
+
+### Option A: Neon Postgres (free, recommended)
+
+1. Go to [neon.tech](https://neon.tech) → sign up → create project
+2. Copy the connection string (looks like `postgresql://user:pass@host/db`)
+3. In Render dashboard → your service → **Environment** → add variable:
+   - Key: `DMARC_DATABASE_URL`
+   - Value: `postgresql+asyncpg://user:pass@host/db?sslmode=require`
+
+### Option B: Render Postgres
+
+1. In Render dashboard → **New** → **PostgreSQL** → Free plan
+2. Create database, then link it to your web service
+3. Render auto-sets the `DATABASE_URL` — add `DMARC_DATABASE_URL` pointing to it
+
 ## Local development
 
 ```bash
