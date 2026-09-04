@@ -191,7 +191,6 @@ async def _persist(
         "p": policy.p,
         "sp": policy.sp,
         "pct": policy.pct,
-        "raw_xml": parsed.metadata.report_id,  # Don't store raw XML in Supabase (save space)
     }
 
     inserted = await insert("dmarc_reports", report_data)

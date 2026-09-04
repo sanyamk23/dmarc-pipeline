@@ -382,16 +382,19 @@ async def stats(domain: str | None = None):
 
     analysis = build_analysis_from_dicts(reports, records_by_report)
 
+    overall = analysis.get("overall", {})
+    alignment = analysis.get("alignment", {})
+
     return StatsSummary(
-        total_reports=analysis["overall"]["total_reports"],
-        total_records=analysis["overall"]["total_records"],
-        total_messages=analysis["overall"]["total_messages"],
-        pass_count=analysis["alignment"]["either_pass"],
-        fail_count=analysis["alignment"]["both_fail"],
-        dkim_pass=analysis["alignment"]["dkim_pass"],
-        dkim_fail=analysis["alignment"]["dkim_fail"],
-        spf_pass=analysis["alignment"]["spf_pass"],
-        spf_fail=analysis["alignment"]["spf_fail"],
+        total_reports=overall.get("total_reports", 0),
+        total_records=overall.get("total_records", 0),
+        total_messages=overall.get("total_messages", 0),
+        pass_count=alignment.get("either_pass", 0),
+        fail_count=alignment.get("both_fail", 0),
+        dkim_pass=alignment.get("dkim_pass", 0),
+        dkim_fail=alignment.get("dkim_fail", 0),
+        spf_pass=alignment.get("spf_pass", 0),
+        spf_fail=alignment.get("spf_fail", 0),
         top_source_ips=analysis.get("top_ips", []),
         top_header_froms=analysis.get("top_header_froms", []),
         per_domain=analysis.get("per_domain", []),
