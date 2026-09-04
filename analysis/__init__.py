@@ -1,3 +1,3 @@
-from analysis.engine import generate_analysis, get_analysis
+from analysis.engine import build_analysis_from_dicts
 
-__all__ = ["generate_analysis", "get_analysis"]
+__all__ = ["build_analysis_from_dicts"]
