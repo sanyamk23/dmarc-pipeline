@@ -238,8 +238,10 @@ async def _persist(
 
 def _quarantine(path: Path) -> None:
     """Move an unprocessable file aside so it doesn't block future runs."""
-    quarantine_dir = Path(__file__).resolve().parent.parent / "quarantine"
-    quarantine_dir.mkdir(exist_ok=True)
+    from config import settings
+
+    quarantine_dir = settings.quarantine_dir
+    quarantine_dir.mkdir(parents=True, exist_ok=True)
     target = quarantine_dir / path.name
     path.rename(target)
     logger.warning("Quarantined unprocessable file → %s", target)

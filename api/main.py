@@ -1,17 +1,14 @@
 """FastAPI application — DMARC report API + dashboard.
 
-Run with::
-
-    python -m api.main
-    # or
-    uvicorn api.main:app --reload --port 8000
+Production entry point: ``gunicorn wsgi:app -k uvicorn.workers.UvicornWorker``
+Local dev: ``python -m cli serve`` or ``./run.sh``
 """
 
 from __future__ import annotations
 
 import logging
-from contextlib import asynccontextmanager
 from collections import defaultdict
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
@@ -21,6 +18,8 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, select
 from starlette.requests import Request
 
+from analysis.engine import _build_analysis, get_analysis, get_report_analysis
+from config import settings
 from models import (
     Base,
     DmarcRecord,
@@ -33,9 +32,7 @@ from models import (
     init_db,
 )
 from parsers.dmarc_xml import parse_dmarc_xml
-from analysis.engine import get_analysis, get_report_analysis, _build_analysis
 from workers.processor import process_file, process_existing_files
-from config import settings
 
 logger = logging.getLogger("dmarc.api")
 
@@ -62,6 +59,10 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Import here to ensure config is loaded before logging setup
+    from logging_config import setup_logging
+
+    setup_logging()
     await init_db()
     yield
     await engine.dispose()
@@ -75,6 +76,29 @@ app = FastAPI(
 )
 
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+
+# ── Middleware ─────────────────────────────────────────────────────────────────
+
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    """Structured request logging with timing."""
+    import time
+
+    start = time.perf_counter()
+    response = await call_next(request)
+    duration_ms = (time.perf_counter() - start) * 1000
+
+    logger.info(
+        "%s %s → %d (%.1fms)",
+        request.method,
+        request.url.path,
+        response.status_code,
+        duration_ms,
+    )
+    response.headers["X-Response-Time-Ms"] = f"{duration_ms:.1f}"
+    return response
 
 
 # ── Health check ──────────────────────────────────────────────────────────────
@@ -104,6 +128,16 @@ async def dashboard(request: Request):
 
 # ── Upload endpoint ───────────────────────────────────────────────────────────
 
+# Whitelisted extensions — reject everything else at the boundary
+ALLOWED_SUFFIXES = {".zip", ".xml", ".xml.gz", ".gz"}
+MAX_BYTES = settings.max_upload_size_mb * 1024 * 1024
+
+
+def _is_allowed_filename(filename: str) -> bool:
+    """Allowlist check on the upload filename extension."""
+    lower = filename.lower()
+    return any(lower.endswith(suffix) for suffix in ALLOWED_SUFFIXES)
+
 
 @app.post("/api/upload", status_code=201)
 async def upload_report(file: UploadFile = File(...)):
@@ -111,9 +145,25 @@ async def upload_report(file: UploadFile = File(...)):
 
     Returns the list of extracted files plus per-file and collective analysis.
     """
+    # ── Input validation ───────────────────────────────────────────────────
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Missing filename")
+
+    if not _is_allowed_filename(file.filename):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type. Allowed: {', '.join(sorted(ALLOWED_SUFFIXES))}",
+        )
+
     data = await file.read()
     if not data:
         raise HTTPException(status_code=400, detail="Empty file")
+
+    if len(data) > MAX_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File exceeds {settings.max_upload_size_mb} MB limit",
+        )
 
     drop_dir = REPORT_DROP_DIR
     drop_dir.mkdir(exist_ok=True)

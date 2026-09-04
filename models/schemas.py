@@ -132,3 +132,18 @@ class StatsSummary(BaseModel):
     top_source_ips: list[dict] = Field(default_factory=list)
     top_header_froms: list[dict] = Field(default_factory=list)
     per_domain: list[dict] = Field(default_factory=list)
+
+
+# ── Upload response schemas ───────────────────────────────────────────────────
+
+
+class UploadResponse(BaseModel):
+    """Response from uploading a DMARC report file."""
+
+    status: str  # "ingested" | "duplicate" | "error"
+    filename: str
+    extracted_files: list[str] = Field(default_factory=list)
+    failed_files: list[str] = Field(default_factory=list)
+    skipped_duplicates: list[str] = Field(default_factory=list)
+    per_file_analysis: list[dict] = Field(default_factory=list)
+    collective_analysis: Optional[dict] = None
