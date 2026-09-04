@@ -62,8 +62,10 @@ class IngestResult:
         return not self.reports and not self.failed and bool(self.skipped)
 
 
-async def process_file(path: Path) -> IngestResult | None:
+def process_file(path: Path) -> IngestResult | None:
     """Ingest a single DMARC report file into Supabase."""
+    import asyncio
+
     path = Path(path)
     if not path.exists():
         logger.warning("File not found: %s", path)
@@ -74,7 +76,7 @@ async def process_file(path: Path) -> IngestResult | None:
 
     # Collect all (xml_bytes, xml_name) pairs from this file
     try:
-        xml_entries = await _extract_all_xml(path)
+        xml_entries = asyncio.run(_extract_all_xml(path))
     except Exception as exc:
         logger.error("Failed to extract XML from %s: %s", path.name, exc)
         _quarantine(path)
@@ -90,16 +92,12 @@ async def process_file(path: Path) -> IngestResult | None:
             result.failed.append(xml_name)
             continue
 
-        report_id = await _persist(parsed, archive_name=path.name, xml_name=xml_name)
+        report_id = _persist(parsed, archive_name=path.name, xml_name=xml_name)
         if report_id is not None:
-            # Fetch the inserted report dict for analysis
-            inserted = await select("dmarc_reports", filters={"id": report_id})
+            inserted = select("dmarc_reports", filters={"id": report_id})
             if inserted:
                 result.reports.append(inserted[0])
-                # Fetch inserted records
-                records = await select(
-                    "dmarc_records", filters={"report_id": report_id}
-                )
+                records = select("dmarc_records", filters={"report_id": report_id})
                 result.records_by_report[report_id] = records
         else:
             result.skipped.append(parsed.metadata.report_id or xml_name)
@@ -122,32 +120,24 @@ async def process_existing_files(directory: Path) -> int:
 # ── Internals ─────────────────────────────────────────────────────────────────
 
 
-async def _extract_all_xml(path: Path) -> list[tuple[bytes, str]]:
+def _extract_all_xml(path: Path) -> list[tuple[bytes, str]]:
     """Return XML content from any supported input (zip/xml/gz)."""
     suffix = path.suffix.lower()
 
     if suffix == ".zip":
-        return await _extract_all_from_zip(path)
+        return _sync_extract_all_xml(path)
 
     if suffix == ".gz":
-        async with aiofiles.open(path, "rb") as fh:
-            data = await fh.read()
+        import gzip
+        data = gzip.open(path, "rb").read()
         return [(data, path.name)]
 
     # Plain XML
-    async with aiofiles.open(path, "rb") as fh:
-        data = await fh.read()
-    return [(data, path.name)]
-
-
-async def _extract_all_from_zip(path: Path) -> list[tuple[bytes, str]]:
-    """Extract all XML members from a zip archive."""
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, _sync_extract_all_xml, path)
+    return [(path.read_bytes(), path.name)]
 
 
 def _sync_extract_all_xml(path: Path) -> list[tuple[bytes, str]]:
-    """Synchronous zip extraction (CPU/IO bound, run in thread)."""
+    """Extract all XML members from a zip archive."""
     with zipfile.ZipFile(path, "r") as zf:
         xml_members = [n for n in zf.namelist() if n.lower().endswith(".xml")]
         if not xml_members:
@@ -155,7 +145,7 @@ def _sync_extract_all_xml(path: Path) -> list[tuple[bytes, str]]:
         return [(zf.read(m), Path(m).name) for m in xml_members]
 
 
-async def _persist(
+def _persist(
     parsed: ParsedReport, archive_name: str, xml_name: str
 ) -> int | None:
     """Persist a parsed report to Supabase. Returns the new report ID."""
@@ -164,9 +154,7 @@ async def _persist(
 
     # Idempotency guard — skip if we've already ingested this report_id
     if report_id:
-        existing = await select(
-            "dmarc_reports", filters={"report_id": report_id}, limit=1
-        )
+        existing = select("dmarc_reports", filters={"report_id": report_id}, limit=1)
         if existing:
             logger.info("Skipping duplicate report_id=%s", report_id)
             return None
@@ -193,7 +181,7 @@ async def _persist(
         "pct": policy.pct,
     }
 
-    inserted = await insert("dmarc_reports", report_data)
+    inserted = insert("dmarc_reports", report_data)
     if not inserted:
         logger.error("Failed to insert report")
         return None
@@ -228,7 +216,7 @@ async def _persist(
         })
 
     if records_data:
-        await insert("dmarc_records", records_data)
+        insert("dmarc_records", records_data)
 
     logger.info(
         "Stored report_id=%s with %d records (Supabase ID: %s)",

@@ -2,6 +2,9 @@
 
 Uses the Supabase REST API (PostgREST) with service role key.
 Data persists in Supabase PostgreSQL and survives deploys.
+
+Note: supabase-py is synchronous, so all functions here are sync.
+FastAPI handles sync route handlers by running them in a threadpool.
 """
 
 from __future__ import annotations
@@ -25,7 +28,7 @@ def get_client() -> Client:
     if _client is None:
         if not settings.supabase_url or not settings.supabase_service_role_key:
             raise RuntimeError(
-                "SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set. "
+                "DMARC_SUPABASE_URL and DMARC_SUPABASE_SERVICE_ROLE_KEY must be set. "
                 "Get them from Supabase Dashboard → Settings → API."
             )
         _client = create_client(
@@ -36,18 +39,18 @@ def get_client() -> Client:
     return _client
 
 
-# ── CRUD helpers ─────────────────────────────────────────────────────────────
+# ── CRUD helpers (synchronous — FastAPI runs sync handlers in threadpool) ─────
 
 
-async def select(
+def select(
     table: str,
     columns: str = "*",
     filters: Optional[dict[str, Any]] = None,
     order: Optional[str] = None,
     limit: Optional[int] = None,
     count: Optional[str] = None,
-):
-    """Query rows from a table. Returns list[dict] or (list[dict], count) if count specified."""
+) -> list[dict]:
+    """Query rows from a table."""
     client = get_client()
     query = client.table(table).select(columns, count=count)
 
@@ -68,7 +71,7 @@ async def select(
     return response.data
 
 
-async def select_single(
+def select_single(
     table: str,
     record_id: int,
     columns: str = "*",
@@ -79,27 +82,27 @@ async def select_single(
     return response.data
 
 
-async def insert(table: str, data: dict | list[dict]) -> list[dict]:
+def insert(table: str, data: dict | list[dict]) -> list[dict]:
     """Insert one or more rows."""
     client = get_client()
     response = client.table(table).insert(data).execute()
     return response.data
 
 
-async def update(table: str, record_id: int, data: dict) -> dict:
+def update(table: str, record_id: int, data: dict) -> dict:
     """Update a row by primary key."""
     client = get_client()
     response = client.table(table).update(data).eq("id", record_id).execute()
     return response.data[0] if response.data else {}
 
 
-async def delete(table: str, record_id: int) -> None:
+def delete(table: str, record_id: int) -> None:
     """Delete a row by primary key."""
     client = get_client()
     client.table(table).delete().eq("id", record_id).execute()
 
 
-async def count(table: str, filters: Optional[dict] = None) -> int:
+def count(table: str, filters: Optional[dict] = None) -> int:
     """Count rows in a table."""
     client = get_client()
     query = client.table(table).select("*", count="exact", head=True)
@@ -110,7 +113,7 @@ async def count(table: str, filters: Optional[dict] = None) -> int:
     return response.count or 0
 
 
-async def rpc(function_name: str, params: Optional[dict] = None) -> Any:
+def rpc(function_name: str, params: Optional[dict] = None) -> Any:
     """Call a Supabase Edge Function or database function."""
     client = get_client()
     response = client.rpc(function_name, params or {}).execute()

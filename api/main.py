@@ -63,7 +63,6 @@ async def lifespan(app: FastAPI):
     from logging_config import setup_logging
 
     setup_logging()
-    # Ensure Supabase client initializes (will raise if creds missing)
     get_client()
     yield
 
@@ -83,7 +82,6 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
-    """Structured request logging with timing."""
     start = time.perf_counter()
     response = await call_next(request)
     duration_ms = (time.perf_counter() - start) * 1000
@@ -103,7 +101,6 @@ async def log_requests(request: Request, call_next):
 
 @app.get("/health", include_in_schema=False)
 async def health() -> dict:
-    """Liveness probe for orchestrators (Render, k8s, etc.)."""
     return {"status": "ok", "version": "1.0.0"}
 
 
@@ -122,17 +119,13 @@ MAX_BYTES = settings.max_upload_size_mb * 1024 * 1024
 
 
 def _is_allowed_filename(filename: str) -> bool:
-    """Allowlist check on the upload filename extension."""
     lower = filename.lower()
     return any(lower.endswith(suffix) for suffix in ALLOWED_SUFFIXES)
 
 
 @app.post("/api/upload", status_code=201)
-async def upload_report(file: UploadFile = File(...)):
-    """Upload a DMARC ``.zip`` / ``.xml`` / ``.xml.gz`` report.
-
-    Returns the list of extracted files plus per-file and collective analysis.
-    """
+def upload_report(file: UploadFile = File(...)):
+    """Upload a DMARC ``.zip`` / ``.xml`` / ``.xml.gz`` report."""
     if not file.filename:
         raise HTTPException(status_code=400, detail="Missing filename")
 
@@ -142,7 +135,7 @@ async def upload_report(file: UploadFile = File(...)):
             detail=f"Unsupported file type. Allowed: {', '.join(sorted(ALLOWED_SUFFIXES))}",
         )
 
-    data = await file.read()
+    data = file.file.read()
     if not data:
         raise HTTPException(status_code=400, detail="Empty file")
 
@@ -152,13 +145,11 @@ async def upload_report(file: UploadFile = File(...)):
             detail=f"File exceeds {settings.max_upload_size_mb} MB limit",
         )
 
-    # Save to disk for processing
     REPORT_DROP_DIR.mkdir(exist_ok=True)
     target = REPORT_DROP_DIR / file.filename
     target.write_bytes(data)
 
-    # Process file using worker
-    result = await process_file(target)
+    result = process_file(target)
     if result is None:
         return UploadResponse(status="error", filename=file.filename).model_dump()
 
@@ -184,10 +175,7 @@ async def upload_report(file: UploadFile = File(...)):
             "analysis": analysis,
         })
 
-    # Build collective analysis
-    collective = build_analysis_from_dicts(
-        result.reports, result.records_by_report
-    )
+    collective = build_analysis_from_dicts(result.reports, result.records_by_report)
 
     return UploadResponse(
         status="ingested",
@@ -204,17 +192,16 @@ async def upload_report(file: UploadFile = File(...)):
 
 
 @app.get("/api/reports", response_model=list[ReportMetadata])
-async def list_reports(
+def list_reports(
     domain: str | None = None,
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ):
-    """List report envelopes with pass/fail counts."""
     filters = {}
     if domain:
         filters["domain"] = domain
 
-    rows = await select(
+    rows = select(
         "dmarc_reports",
         filters=filters if filters else None,
         order="date_end.desc",
@@ -223,18 +210,7 @@ async def list_reports(
 
     result = []
     for row in rows:
-        record_count = await count(
-            "dmarc_records", filters={"report_id": row["id"]}
-        )
-        pass_count = await count(
-            "dmarc_records",
-            filters={"report_id": row["id"]},  # We'll compute this in Python
-        )
-        # Get pass/fail from records
-        records = await select(
-            "dmarc_records",
-            filters={"report_id": row["id"]},
-        )
+        records = select("dmarc_records", filters={"report_id": row["id"]})
         pass_fail = _compute_pass_fail(records)
 
         result.append(
@@ -251,7 +227,7 @@ async def list_reports(
                 p=row.get("p"),
                 sp=row.get("sp"),
                 pct=row.get("pct"),
-                record_count=record_count,
+                record_count=len(records),
                 pass_count=pass_fail["pass"],
                 fail_count=pass_fail["fail"],
                 created_at=row.get("created_at"),
@@ -261,7 +237,6 @@ async def list_reports(
 
 
 def _compute_pass_fail(records: list[dict]) -> dict:
-    """Compute pass/fail counts from record dicts."""
     pass_count = 0
     fail_count = 0
     for rec in records:
@@ -275,12 +250,12 @@ def _compute_pass_fail(records: list[dict]) -> dict:
 
 
 @app.get("/api/reports/{report_id}", response_model=ReportMetadata)
-async def get_report(report_id: int):
-    row = await select_single("dmarc_reports", report_id)
+def get_report(report_id: int):
+    row = select_single("dmarc_reports", report_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Report not found")
 
-    records = await select("dmarc_records", filters={"report_id": record_id})
+    records = select("dmarc_records", filters={"report_id": report_id})
     pass_fail = _compute_pass_fail(records)
 
     return ReportMetadata(
@@ -304,22 +279,26 @@ async def get_report(report_id: int):
 
 
 @app.get("/api/reports/{report_id}/detail")
-async def get_report_detail(report_id: int):
-    """Full detail for a single report — every field, every record, every auth result."""
-    row = await select_single("dmarc_reports", report_id)
+def get_report_detail(report_id: int):
+    row = select_single("dmarc_reports", report_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Report not found")
 
-    records = await select("dmarc_records", filters={"report_id": report_id})
+    records = select("dmarc_records", filters={"report_id": report_id})
 
-    # Parse JSON auth fields
     for rec in records:
         if rec.get("dkim_auth_json"):
-            rec["dkim_auth"] = json.loads(rec["dkim_auth_json"])
+            if isinstance(rec["dkim_auth_json"], str):
+                rec["dkim_auth"] = json.loads(rec["dkim_auth_json"])
+            else:
+                rec["dkim_auth"] = rec["dkim_auth_json"]
         else:
             rec["dkim_auth"] = []
         if rec.get("spf_auth_json"):
-            rec["spf_auth"] = json.loads(rec["spf_auth_json"])
+            if isinstance(rec["spf_auth_json"], str):
+                rec["spf_auth"] = json.loads(rec["spf_auth_json"])
+            else:
+                rec["spf_auth"] = rec["spf_auth_json"]
         else:
             rec["spf_auth"] = []
 
@@ -336,7 +315,7 @@ async def get_report_detail(report_id: int):
 
 
 @app.get("/api/reports/{report_id}/records", response_model=list[RecordRow])
-async def list_records(
+def list_records(
     report_id: int,
     source_ip: str | None = None,
     header_from: str | None = None,
@@ -349,9 +328,8 @@ async def list_records(
     if header_from:
         filters["header_from"] = header_from
 
-    rows = await select("dmarc_records", filters=filters, limit=limit)
+    rows = select("dmarc_records", filters=filters, limit=limit)
 
-    # Post-filter for pass/fail (Supabase-py doesn't support OR easily)
     if result == "pass":
         rows = [r for r in rows if r.get("dkim_aligned") or r.get("spf_aligned")]
     elif result == "fail":
@@ -366,16 +344,14 @@ async def list_records(
 
 
 @app.get("/api/stats", response_model=StatsSummary)
-async def stats(domain: str | None = None):
-    # Get all reports (optionally filtered)
+def stats(domain: str | None = None):
     filters = {}
     if domain:
         filters["domain"] = domain
 
-    reports = await select("dmarc_reports", filters=filters if filters else None)
-    records = await select("dmarc_records")
+    reports = select("dmarc_reports", filters=filters if filters else None)
+    records = select("dmarc_records")
 
-    # Build analysis
     records_by_report = defaultdict(list)
     for rec in records:
         records_by_report[rec["report_id"]].append(rec)
@@ -405,10 +381,9 @@ async def stats(domain: str | None = None):
 
 
 @app.get("/api/analysis")
-async def analysis():
-    """Full analysis report across all ingested DMARC data."""
-    reports = await select("dmarc_reports")
-    records = await select("dmarc_records")
+def analysis():
+    reports = select("dmarc_reports")
+    records = select("dmarc_records")
 
     records_by_report = defaultdict(list)
     for rec in records:
