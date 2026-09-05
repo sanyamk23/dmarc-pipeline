@@ -175,6 +175,25 @@ def build_analysis_from_dicts(
     # ── Health score ───────────────────────────────────────────────────────
     health_score = _compute_health_score(all_records)
 
+    # ── Sending services (heuristic grouping) ──────────────────────────────
+    services = _identify_services(per_ip)
+
+    # ── Disposition breakdown ──────────────────────────────────────────────
+    dispositions: dict[str, int] = defaultdict(int)
+    for rec in all_records:
+        dispositions[rec.get("disposition") or "unknown"] += rec.get("count", 0) or 0
+
+    # ── Per-header-from breakdown ──────────────────────────────────────────
+    header_froms: list[dict] = []
+    per_header: dict[str, dict] = defaultdict(lambda: {"messages": 0, "records": 0})
+    for rec in all_records:
+        hf = rec.get("header_from") or "unknown"
+        per_header[hf]["messages"] += rec.get("count", 0) or 0
+        per_header[hf]["records"] += 1
+    for hf, d in per_header.items():
+        header_froms.append({"domain": hf, "messages": d["messages"], "records": d["records"]})
+    header_froms.sort(key=lambda x: x["messages"], reverse=True)
+
     return {
         "generated_at": datetime.utcnow().isoformat(),
         "overall": {
@@ -202,6 +221,9 @@ def build_analysis_from_dicts(
         "domains": domain_summaries,
         "top_ips": ip_rankings[:20],
         "recommendations": recommendations,
+        "sending_services": services,
+        "dispositions": dict(dispositions),
+        "header_froms": header_froms,
     }
 
 
@@ -224,6 +246,33 @@ def _empty_analysis() -> dict[str, Any]:
         "top_ips": [],
         "recommendations": [],
     }
+
+
+def _identify_services(per_ip: dict[str, dict]) -> list[dict]:
+    """Heuristically group source IPs into sending services."""
+    services: dict[str, dict] = defaultdict(
+        lambda: {"messages": 0, "ip_count": 0, "ips": []}
+    )
+
+    for ip, d in per_ip.items():
+        # Heuristic: Google ranges
+        if ip.startswith("209.85.") or ip.startswith("108.177."):
+            name = "google"
+        elif ip.startswith("2607:f8b0") or ip.startswith("2a00:1450"):
+            name = "google"
+        elif ip.startswith("2600:1901"):
+            name = "google"
+        else:
+            name = "other"
+
+        s = services[name]
+        s["messages"] += d["messages"]
+        s["ip_count"] += 1
+        s["ips"].append(ip)
+
+    result = [{"service": name, **data} for name, data in services.items()]
+    result.sort(key=lambda x: x["messages"], reverse=True)
+    return result
 
 
 def _generate_recommendations(both_fail: int, total: int) -> list[dict]:
