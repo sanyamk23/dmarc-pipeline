@@ -2,14 +2,12 @@
 
 [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/sanyamk23/dmarc-pipeline)
 
-Ingest, analyze, and browse DMARC aggregate reports. Drop a `.zip`, `.xml`, or
-`.xml.gz` report and get a complete breakdown of your email authentication.
+Automatically ingest, analyze, and browse DMARC aggregate reports. Set it up once and never think about it again.
 
 ## Deploy free (2 minutes)
 
 1. Click the **Deploy to Render** button above
-2. Or: create a **Web Service** on [render.com](https://render.com), connect
-   this repo, use these settings:
+2. Or: create a **Web Service** on [render.com](https://render.com), connect this repo:
 
 | Setting | Value |
 |---------|-------|
@@ -18,24 +16,98 @@ Ingest, analyze, and browse DMARC aggregate reports. Drop a `.zip`, `.xml`, or
 | Start command | `gunicorn wsgi:app -w 2 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:$PORT` |
 | Plan | Free |
 
-## Persistent data (optional, recommended)
+## Email automation (hands-free)
 
-By default the app uses SQLite (resets on deploy). For permanent storage that
-survives deploys and can scale:
+The app can watch your inbox and auto-ingest DMARC reports as they arrive.
 
-### Option A: Neon Postgres (free, recommended)
+### Option A: IMAP (any email provider)
 
-1. Go to [neon.tech](https://neon.tech) → sign up → create project
-2. Copy the connection string (looks like `postgresql://user:pass@host/db`)
-3. In Render dashboard → your service → **Environment** → add variable:
-   - Key: `DMARC_DATABASE_URL`
-   - Value: `postgresql+asyncpg://user:pass@host/db?sslmode=require`
+Set these environment variables:
 
-### Option B: Render Postgres
+```bash
+EMAIL_USER=your-email@gmail.com
+EMAIL_PASSWORD=xxxx-xxxx-xxxx-xxxx  # Gmail App Password (not your real password!)
+EMAIL_HOST=imap.gmail.com           # or imap-mail.outlook.com, etc.
+EMAIL_SEARCH='SUBJECT "DMARC"'      # customize to match your reports
+```
 
-1. In Render dashboard → **New** → **PostgreSQL** → Free plan
-2. Create database, then link it to your web service
-3. Render auto-sets the `DATABASE_URL` — add `DMARC_DATABASE_URL` pointing to it
+### Option B: Gmail API (more reliable)
+
+1. Go to [Google Cloud Console](https://console.cloud.google.com)
+2. Create project → Enable Gmail API → Create OAuth credentials
+3. Download `credentials.json` to the project root
+4. Set: `GMAIL_CREDENTIALS_FILE=credentials.json`
+5. First run opens browser for OAuth consent
+
+### Run the watcher
+
+```bash
+# One-time check
+python -m automation.email_watcher
+
+# Continuous polling (every 5 min)
+python -m automation.email_watcher --loop
+
+# Or with Gmail API
+python -m automation.gmail_api --loop
+```
+
+### On Render
+
+Add to your start command:
+```bash
+python -m automation.email_watcher --loop & gunicorn wsgi:app -k uvicorn.workers.UvicornWorker -b 0.0.0.0:$PORT
+```
+
+## Persistent data (Supabase recommended)
+
+### Setup Supabase (free, permanent)
+
+1. Go to [supabase.com](https://supabase.com) → New Project
+2. Run this SQL in **SQL Editor**:
+
+```sql
+CREATE TABLE dmarc_reports (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    xml_filename VARCHAR(255) NOT NULL,
+    archive_filename VARCHAR(255),
+    org_name VARCHAR(255),
+    org_email VARCHAR(255),
+    report_id VARCHAR(128) UNIQUE,
+    date_begin TIMESTAMPTZ,
+    date_end TIMESTAMPTZ,
+    domain VARCHAR(255),
+    adkim VARCHAR(8),
+    aspf VARCHAR(8),
+    p VARCHAR(16),
+    sp VARCHAR(16),
+    pct INTEGER DEFAULT 100,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE dmarc_records (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    report_id BIGINT REFERENCES dmarc_reports(id) ON DELETE CASCADE,
+    source_ip VARCHAR(45),
+    count INTEGER DEFAULT 0,
+    header_from VARCHAR(255),
+    envelope_from VARCHAR(255),
+    envelope_to VARCHAR(255),
+    disposition VARCHAR(16),
+    dkim_aligned BOOLEAN DEFAULT FALSE,
+    spf_aligned BOOLEAN DEFAULT FALSE,
+    dkim_result VARCHAR(16),
+    spf_result VARCHAR(16),
+    dkim_domain VARCHAR(255),
+    spf_domain VARCHAR(255),
+    dkim_auth_json JSONB DEFAULT '[]'::jsonb,
+    spf_auth_json JSONB DEFAULT '[]'::jsonb
+);
+```
+
+3. In Render → Environment:
+   - `DMARC_SUPABASE_URL` = `https://xxxxx.supabase.co`
+   - `DMARC_SUPABASE_SERVICE_ROLE_KEY` = your service_role key
 
 ## Local development
 
@@ -43,13 +115,17 @@ survives deploys and can scale:
 ./run.sh
 ```
 
-Opens at <http://localhost:8000>.
+Starts:
+- Dashboard at http://localhost:8000
+- Folder watcher (auto-ingest from `reports/` folder)
+- Email watcher (if `EMAIL_USER` or `GMAIL_CREDENTIALS_FILE` is set)
 
 ## What it does
 
+- **Email auto-ingestion** — watches inbox for DMARC reports, processes automatically
+- **Folder watcher** — drop files in `reports/` for instant processing
 - **Drag & drop upload** — zip, xml, or xml.gz
 - **Multi-file zip support** — extracts and parses every XML inside
-- **Folder watcher** — drop files in `reports/` for automatic ingestion
 - **Per-file analysis** — health score, alignment stats, IP breakdown
 - **Full detail view** — every parameter from every record
 - **Collective analysis** — combined stats across all reports
