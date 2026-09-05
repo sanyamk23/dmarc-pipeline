@@ -574,3 +574,79 @@ select:focus, input[type="text"]:focus { outline: none; border-color: var(--acce
     transition-duration: 80ms !important;
   }
 }
+
+/* ── Analysis cards ──────────────────────────────────────────────────────────── */
+
+.analysis-card {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  overflow: hidden;
+  transition: all var(--dur-mid) var(--ease-out);
+}
+
+.analysis-card:hover {
+  border-color: var(--border-bright);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+}
+
+.analysis-card-header {
+  padding: var(--sp-2) var(--sp-3);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.analysis-card-body {
+  padding: var(--sp-3);
+}
+
+.analysis-metric {
+  display: flex;
+  justify-content: space-between;
+  padding: 4px 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.analysis-metric span:first-child {
+  color: var(--text-muted);
+}
+
+/* ── File chips ──────────────────────────────────────────────────────────────── */
+
+.file-chip {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 4px 12px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  transition: all var(--dur-fast) var(--ease-out);
+}
+
+.file-chip:hover {
+  border-color: var(--border-bright);
+}
+
+.file-chip.failed {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+/* ── Details link ───────────────────────────────────────────────────────────── */
+
+.details-link {
+  color: var(--accent);
+  text-decoration: none;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  transition: all var(--dur-fast) var(--ease-out);
+}
+
+.details-link:hover {
+  color: var(--accent-hover);
+  text-decoration: underline;
+}
