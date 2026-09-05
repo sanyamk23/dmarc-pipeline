@@ -3,11 +3,10 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>DMARC Pipeline — Email Authentication Operations</title>
+  <title>DMARC Pipeline — See who's sending email as you</title>
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
-  <!-- ── Top bar ─────────────────────────────────────────────────────────── -->
   <header class="topbar">
     <div class="topbar-brand">
       <div class="topbar-logo">D</div>
@@ -22,66 +21,37 @@
   </header>
 
   <div class="container">
-    <!-- ── Story / hero ────────────────────────────────────────────────────── -->
-    <section class="card" style="border-color: var(--accent); margin-bottom: var(--sp-6);">
-      <div class="card-body">
-        <div style="display: grid; grid-template-columns: 1fr auto; gap: var(--sp-6); align-items: center;">
-          <div>
-            <h2 style="font-family: var(--font-display); font-size: 22px; font-weight: 600; margin-bottom: var(--sp-3);">
-              Every day, thousands of emails claim to be you.
-            </h2>
-            <p style="color: var(--muted); max-width: 60ch; margin-bottom: var(--sp-4);">
-              Phishers spoof your domain. Legitimate mail gets flagged. Your DMARC reports hold
-              the answer. Most teams never read them. We built this so you don't have to.
-            </p>
-            <div style="display: flex; gap: var(--sp-3);">
-              <a href="#upload" class="btn">Ingest your first report</a>
-              <a href="#stats" class="btn btn-ghost">View live data</a>
-            </div>
-          </div>
-          <div style="font-family: var(--font-display); text-align: right; opacity: 0.6;">
-            <div style="font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em;">What we do</div>
-            <div style="font-size: 14px; margin-top: var(--sp-2);">Drop a .zip</div>
-            <div style="font-size: 24px; color: var(--accent); font-weight: 600;">→</div>
-            <div style="font-size: 14px;">See who's spoofing you</div>
-          </div>
+    <!-- ── Hero / Story ───────────────────────────────────────────────────── -->
+    <section class="hero">
+      <div class="hero-badge">
+        <span>●</span> Email authentication monitoring
+      </div>
+      <h1 class="hero-title">Every day, thousands of emails<br/>claim to be you.</h1>
+      <p class="hero-subtitle">
+        Phishers spoof your domain. Mail providers forward your messages and break SPF.
+        Your DMARC reports hold the answer. Most teams never open them.
+        We built this so you don't have to wonder.
+      </p>
+      <div class="hero-stats">
+        <div class="hero-stat">
+          <div class="hero-stat-value" id="hero-reports">0</div>
+          <div class="hero-stat-label">Reports analyzed</div>
+        </div>
+        <div class="hero-stat">
+          <div class="hero-stat-value" id="hero-messages">0</div>
+          <div class="hero-stat-label">Messages evaluated</div>
+        </div>
+        <div class="hero-stat">
+          <div class="hero-stat-value" id="hero-ips">0</div>
+          <div class="hero-stat-label">Unique senders</div>
         </div>
       </div>
     </section>
 
-    <!-- ── Stat strip (signature element) ───────────────────────────────────── -->
-    <div id="stats" class="stat-strip">
-      <div class="stat-cell">
-        <div class="stat-label">Reports ingested</div>
-        <div class="stat-value accent" id="stat-reports">–</div>
-        <div class="stat-sub">total uploads processed</div>
-      </div>
-      <div class="stat-cell">
-        <div class="stat-label">Source IPs seen</div>
-        <div class="stat-value" id="stat-records">–</div>
-        <div class="stat-sub">unique sending hosts</div>
-      </div>
-      <div class="stat-cell">
-        <div class="stat-label">Messages evaluated</div>
-        <div class="stat-value" id="stat-messages">–</div>
-        <div class="stat-sub">across all reports</div>
-      </div>
-      <div class="stat-cell">
-        <div class="stat-label">Aligned (pass)</div>
-        <div class="stat-value success" id="stat-pass">–</div>
-        <div class="stat-sub">DKIM or SPF pass</div>
-      </div>
-      <div class="stat-cell">
-        <div class="stat-label">Rejected (fail)</div>
-        <div class="stat-value danger" id="stat-fail">–</div>
-        <div class="stat-sub">both checks failed</div>
-      </div>
-    </div>
-
-    <!-- ── Upload / send report ─────────────────────────────────────────────── -->
+    <!-- ── Upload ─────────────────────────────────────────────────────────── -->
     <section id="upload" class="card upload-card">
       <div class="card-header">
-        <div class="card-title">Send DMARC report</div>
+        <div class="card-title">Ingest report</div>
         <span class="badge info">.zip / .xml / .xml.gz</span>
       </div>
       <div class="card-body">
@@ -99,23 +69,38 @@
             </div>
           </div>
           <div class="upload-actions">
-            <button type="submit" id="upload-btn" disabled>Ingest report</button>
+            <button type="submit" id="upload-btn" disabled>Ingest</button>
             <p id="upload-status" class="status"></p>
           </div>
         </form>
       </div>
     </section>
 
-    <!-- ── Upload results (extracted files + analysis) ──────────────────────── -->
-    <section class="card" id="upload-results-card" hidden>
-      <div class="card-header">
-        <div class="card-title">Upload results</div>
-        <span id="upload-results-filename" class="badge info"></span>
+    <!-- ── Stat strip ─────────────────────────────────────────────────────── -->
+    <div id="stats" class="stat-strip">
+      <div class="stat-cell">
+        <div class="stat-label">Reports</div>
+        <div class="stat-value accent" id="stat-reports">–</div>
       </div>
-      <div id="upload-results" class="card-body"></div>
-    </section>
+      <div class="stat-cell">
+        <div class="stat-label">Records</div>
+        <div class="stat-value" id="stat-records">–</div>
+      </div>
+      <div class="stat-cell">
+        <div class="stat-label">Messages</div>
+        <div class="stat-value" id="stat-messages">–</div>
+      </div>
+      <div class="stat-cell">
+        <div class="stat-label">Aligned</div>
+        <div class="stat-value success" id="stat-pass">–</div>
+      </div>
+      <div class="stat-cell">
+        <div class="stat-label">Failed</div>
+        <div class="stat-value danger" id="stat-fail">–</div>
+      </div>
+    </div>
 
-    <!-- ── Reports table ────────────────────────────────────────────────────── -->
+    <!-- ── Reports table ──────────────────────────────────────────────────── -->
     <section id="reports" class="card">
       <div class="card-header">
         <div class="card-title">Report envelopes</div>
@@ -127,7 +112,7 @@
             <tr>
               <th>ID</th>
               <th>Domain</th>
-              <th>Organisation</th>
+              <th>Organization</th>
               <th>Date range</th>
               <th>Records</th>
               <th>Pass</th>
@@ -140,7 +125,7 @@
       </div>
     </section>
 
-    <!-- ── Records detail ───────────────────────────────────────────────────── -->
+    <!-- ── Records detail ─────────────────────────────────────────────────── -->
     <section class="card" id="records-section" hidden>
       <div class="card-header">
         <div class="card-title">Records for Report #<span id="records-report-id"></span></div>
@@ -169,24 +154,13 @@
       </div>
     </section>
 
-    <!-- ── Top sources ──────────────────────────────────────────────────────── -->
-    <section class="card" id="top-sources-card">
+    <!-- ── Upload results ─────────────────────────────────────────────────── -->
+    <section class="card" id="upload-results-card" hidden>
       <div class="card-header">
-        <div class="card-title">Top source IPs</div>
-        <span class="badge warn">by message volume</span>
+        <div class="card-title">Analysis results</div>
+        <span id="upload-results-filename" class="badge info"></span>
       </div>
-      <div class="table-wrap">
-        <table id="top-sources-table">
-          <thead>
-            <tr>
-              <th>IP</th>
-              <th>Messages</th>
-              <th>Share</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-      </div>
+      <div id="upload-results" class="card-body"></div>
     </section>
   </div>
 
