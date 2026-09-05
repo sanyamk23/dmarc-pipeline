@@ -21,15 +21,22 @@
   </header>
 
   <div class="container">
-    <!-- ── Hero (signature moment) ───────────────────────────────────────── -->
+    <!-- ── Hero: The signature moment ────────────────────────────────────── -->
     <section class="hero">
-      <div class="hero-label">Email authentication monitoring</div>
-      <h1 class="hero-title">See who's<br/><em>sending email</em><br/>as you.</h1>
+      <div class="hero-eyebrow">
+        <span style="width: 6px; height: 6px; background: var(--success); border-radius: 50%; display: inline-block;"></span>
+        Email authentication monitoring
+      </div>
+      <h1 class="hero-title">
+        See who's<br/>
+        <em>sending email</em><br/>
+        as you.
+      </h1>
       <p class="hero-subtitle">
         Phishers spoof your domain. Legitimate services break SPF when they forward your mail.
-        Your DMARC reports hold the answer. Most teams never read them.
+        Your DMARC reports hold the answer. Most teams never read them — we built this so you don't have to wonder.
       </p>
-      <div class="hero-cta">
+      <div class="hero-actions">
         <a href="#upload" class="btn">Ingest your first report</a>
         <a href="#stats" class="btn btn-ghost">View overview</a>
       </div>
@@ -49,7 +56,7 @@
       </div>
     </section>
 
-    <!-- ── Upload ─────────────────────────────────────────────────────────── -->
+    <!-- ── Upload: Conversational interaction ─────────────────────────────── -->
     <section id="upload" class="card upload-card">
       <div class="card-header">
         <div class="card-title">Ingest report</div>
@@ -60,7 +67,7 @@
           <div id="drop-zone" class="drop-zone">
             <div class="drop-zone-content">
               <span class="drop-icon">↓</span>
-              <span class="drop-text">Drop your DMARC report</span>
+              <span class="drop-text">Drop your DMARC report here</span>
               <span class="drop-or">or</span>
               <label class="browse-btn">
                 Browse files
@@ -77,7 +84,7 @@
       </div>
     </section>
 
-    <!-- ── Stat strip ─────────────────────────────────────────────────────── -->
+    <!-- ── Stats: Staggered reveal ────────────────────────────────────────── -->
     <div id="stats" class="stat-strip">
       <div class="stat-cell">
         <div class="stat-label">Reports</div>
@@ -130,13 +137,11 @@
     <section class="card" id="records-section" hidden>
       <div class="card-header">
         <div class="card-title">Records for Report #<span id="records-report-id"></span></div>
-        <div style="display: flex; gap: var(--sp-2);">
-          <select id="result-filter">
-            <option value="">All results</option>
-            <option value="pass">Aligned only</option>
-            <option value="fail">Failed only</option>
-          </select>
-        </div>
+        <select id="result-filter">
+          <option value="">All results</option>
+          <option value="pass">Aligned only</option>
+          <option value="fail">Failed only</option>
+        </select>
       </div>
       <div class="table-wrap">
         <table>

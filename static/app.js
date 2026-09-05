@@ -1,5 +1,6 @@
 // ═══════════════════════════════════════════════════════════════════════════
-// DMARC Pipeline — dashboard logic
+// DMARC Pipeline — Dashboard Logic
+// Principles: Interaction as conversation, purposeful motion, joyful feedback
 // ═══════════════════════════════════════════════════════════════════════════
 
 const $ = (sel) => document.querySelector(sel);
@@ -23,36 +24,50 @@ function fmtPct(n) {
   return n.toFixed(1) + '%';
 }
 
+// Animated number counter
 function animateCount(el, target, duration = 1200) {
   const start = performance.now();
+  const from = parseInt(el.textContent.replace(/,/g, '')) || 0;
   function tick(now) {
     const t = Math.min((now - start) / duration, 1);
     const eased = t === 1 ? 1 : 1 - Math.pow(2, -10 * t);
-    el.textContent = fmtCount(Math.round(target * eased));
+    const val = Math.round(from + (target - from) * eased);
+    el.textContent = fmtCount(val);
     if (t < 1) requestAnimationFrame(tick);
   }
   requestAnimationFrame(tick);
 }
 
-// ── Intersection Observer for scroll reveals ──────────────────────────────────
+// ── Scroll reveals (IntersectionObserver) ─────────────────────────────────────
 
 function observeReveals() {
   const observer = new IntersectionObserver((entries) => {
-    entries.forEach(entry => {
+    entries.forEach((entry, i) => {
       if (entry.isIntersecting) {
-        entry.target.style.opacity = '1';
-        entry.target.style.transform = 'translateY(0)';
+        entry.target.style.transitionDelay = `${i * 50}ms`;
+        entry.target.classList.add('revealed');
+        observer.unobserve(entry.target);
       }
     });
-  }, { threshold: 0.1 });
+  }, { threshold: 0.1, rootMargin: '0px 0px -50px 0px' });
 
   $$('.card, .stat-strip').forEach(el => {
     el.style.opacity = '0';
-    el.style.transform = 'translateY(20px)';
-    el.style.transition = 'opacity 0.6s cubic-bezier(0.16, 1, 0.3, 1), transform 0.6s cubic-bezier(0.16, 1, 0.3, 1)';
+    el.style.transform = 'translateY(24px)';
+    el.style.transition = 'opacity 0.6s var(--ease-out), transform 0.6s var(--ease-out)';
     observer.observe(el);
   });
 }
+
+// Mark revealed elements
+const revealObserver = new IntersectionObserver((entries) => {
+  entries.forEach(entry => {
+    if (entry.isIntersecting) {
+      entry.target.style.opacity = '1';
+      entry.target.style.transform = 'translateY(0)';
+    }
+  });
+}, { threshold: 0.1 });
 
 // ── Stats ─────────────────────────────────────────────────────────────────────
 
@@ -82,10 +97,15 @@ async function loadReports() {
     tbody.innerHTML = '';
     $('#reports-count').textContent = `${reports.length} total`;
 
+    if (reports.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="8" style="text-align: center; padding: var(--sp-6); color: var(--text-muted);">No reports yet. Upload your first DMARC report above.</td></tr>`;
+      return;
+    }
+
     reports.forEach((r, i) => {
       const tr = document.createElement('tr');
       tr.style.cursor = 'pointer';
-      tr.style.animation = `fadeInUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) ${i * 0.05}s both`;
+      tr.style.animation = `fadeInUp 0.4s var(--ease-out) ${i * 0.05}s both`;
       tr.innerHTML = `
         <td>${r.id}</td>
         <td>${r.domain || '–'}</td>
@@ -200,13 +220,13 @@ $('#upload-form').addEventListener('submit', async (e) => {
     status.className = 'status';
     uploadBtn.disabled = true;
     const result = await fetch('/api/upload', { method: 'POST', body: fd }).then(r => r.json());
-    status.textContent = `✓ ${result.status}`;
+    status.textContent = `Done — ${result.status}`;
     status.className = 'status success';
     fileInput.value = '';
     fileName.textContent = '';
     renderUploadResults(result);
   } catch (err) {
-    status.textContent = `✗ ${err.message}`;
+    status.textContent = `Error: ${err.message}`;
     status.className = 'status error';
   } finally {
     uploadBtn.disabled = fileInput.files.length === 0;
@@ -230,10 +250,10 @@ function renderUploadResults(result) {
       <div style="font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-muted); margin-bottom: var(--sp-2);">
         Extracted files (${result.extracted_files.length})
       </div>
-      <div style="display: flex; flex-wrap: wrap; gap: var(--sp-1);">`;
+      <div style="display: flex; flex-wrap: wrap; gap: var(--sp-2);">`;
     for (const f of result.extracted_files) {
       const failed = result.failed_files?.includes(f);
-      html += `<span style="background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--r-sm); padding: 4px 12px; font-family: var(--font-mono); font-size: 12px; ${failed ? 'border-color: var(--danger); color: var(--danger);' : ''}">${f}${failed ? ' (failed)' : ''}</span>`;
+      html += `<span style="background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--r-sm); padding: var(--sp-1) var(--sp-3); font-family: var(--font-mono); font-size: 12px; ${failed ? 'border-color: var(--danger); color: var(--danger);' : ''}">${f}${failed ? ' (failed)' : ''}</span>`;
     }
     html += `</div></div>`;
   }
@@ -243,15 +263,15 @@ function renderUploadResults(result) {
     const c = result.collective_analysis;
     const o = c.overall;
     const a = c.alignment;
-    html += `<div style="background: var(--accent-dim); border: 1px solid rgba(232, 163, 61, 0.2); border-radius: var(--r-lg); padding: var(--sp-4); margin-bottom: var(--sp-4);">
+    html += `<div style="background: var(--accent-dim); border: 1px solid rgba(240, 160, 48, 0.15); border-radius: var(--r-lg); padding: var(--sp-4); margin-bottom: var(--sp-4);">
       <div style="font-family: var(--font-mono); font-size: 13px; font-weight: 600; color: var(--accent); margin-bottom: var(--sp-3);">
         Combined health: ${o.health_score}/100 (${o.health_label})
       </div>
-      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: var(--sp-3);">
-        <div><div style="font-family: var(--font-mono); font-size: 24px; font-weight: 700;">${fmtCount(o.total_reports)}</div><div style="font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em;">Reports</div></div>
-        <div><div style="font-family: var(--font-mono); font-size: 24px; font-weight: 700;">${fmtCount(o.total_records)}</div><div style="font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em;">Records</div></div>
-        <div><div style="font-family: var(--font-mono); font-size: 24px; font-weight: 700;">${fmtCount(o.total_messages)}</div><div style="font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em;">Messages</div></div>
-        <div><div style="font-family: var(--font-mono); font-size: 24px; font-weight: 700; color: var(--accent);">${fmtPct(a.overall_pass_rate)}</div><div style="font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em;">Pass rate</div></div>
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(80px, 1fr)); gap: var(--sp-3);">
+        <div><div style="font-family: var(--font-mono); font-size: 20px; font-weight: 700;">${fmtCount(o.total_reports)}</div><div style="font-size: 10px; color: var(--text-muted); text-transform: uppercase;">Reports</div></div>
+        <div><div style="font-family: var(--font-mono); font-size: 20px; font-weight: 700;">${fmtCount(o.total_records)}</div><div style="font-size: 10px; color: var(--text-muted); text-transform: uppercase;">Records</div></div>
+        <div><div style="font-family: var(--font-mono); font-size: 20px; font-weight: 700;">${fmtCount(o.total_messages)}</div><div style="font-size: 10px; color: var(--text-muted); text-transform: uppercase;">Messages</div></div>
+        <div><div style="font-family: var(--font-mono); font-size: 20px; font-weight: 700; color: var(--accent);">${fmtPct(a.overall_pass_rate)}</div><div style="font-size: 10px; color: var(--text-muted); text-transform: uppercase;">Pass rate</div></div>
       </div>
     </div>`;
   }
@@ -260,25 +280,24 @@ function renderUploadResults(result) {
   if (result.per_file_analysis?.length > 0) {
     html += `<div>
       <div style="font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-muted); margin-bottom: var(--sp-2);">Per-file analysis</div>
-      <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: var(--sp-2);">`;
+      <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: var(--sp-3);">`;
     for (const file of result.per_file_analysis) {
       const a = file.analysis;
       const o = a.overall;
       const al = a.alignment;
-      html += `<div style="background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--r-md); overflow: hidden;">
-        <div style="padding: var(--sp-2) var(--sp-3); border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center;">
+      html += `<div style="background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--r-md); overflow: hidden; transition: transform var(--dur-mid) var(--ease-out), border-color var(--dur-mid) var(--ease-out);">
+        <div style="padding: var(--sp-3); border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center;">
           <span style="font-family: var(--font-mono); font-size: 12px;">${file.xml_filename}</span>
           <span class="badge ${o.health_score >= 70 ? 'pass' : o.health_score >= 40 ? 'warn' : 'fail'}">${o.health_score}/100</span>
         </div>
         <div style="padding: var(--sp-3);">
-          <div style="display: flex; justify-content: space-between; padding: 4px 0; font-family: var(--font-mono); font-size: 12px;"><span style="color: var(--text-muted);">Org</span><span>${file.org_name || '–'}</span></div>
-          <div style="display: flex; justify-content: space-between; padding: 4px 0; font-family: var(--font-mono); font-size: 12px;"><span style="color: var(--text-muted);">Domain</span><span>${file.domain || '–'}</span></div>
-          <div style="display: flex; justify-content: space-between; padding: 4px 0; font-family: var(--font-mono); font-size: 12px;"><span style="color: var(--text-muted);">Messages</span><span>${fmtCount(o.total_messages)}</span></div>
-          <div style="display: flex; justify-content: space-between; padding: 4px 0; font-family: var(--font-mono); font-size: 12px;"><span style="color: var(--text-muted);">DKIM</span><span style="color: var(--success);">${fmtPct(al.dkim_pass_rate)}</span></div>
-          <div style="display: flex; justify-content: space-between; padding: 4px 0; font-family: var(--font-mono); font-size: 12px;"><span style="color: var(--text-muted);">SPF</span><span style="color: var(--${al.spf_pass_rate > 50 ? 'success' : 'danger'});">${fmtPct(al.spf_pass_rate)}</span></div>
+          <div style="display: flex; justify-content: space-between; padding: 3px 0; font-family: var(--font-mono); font-size: 11px;"><span style="color: var(--text-muted);">Org</span><span>${file.org_name || '–'}</span></div>
+          <div style="display: flex; justify-content: space-between; padding: 3px 0; font-family: var(--font-mono); font-size: 11px;"><span style="color: var(--text-muted);">Domain</span><span>${file.domain || '–'}</span></div>
+          <div style="display: flex; justify-content: space-between; padding: 3px 0; font-family: var(--font-mono); font-size: 11px;"><span style="color: var(--text-muted);">Messages</span><span>${fmtCount(o.total_messages)}</span></div>
+          <div style="display: flex; justify-content: space-between; padding: 3px 0; font-family: var(--font-mono); font-size: 11px;"><span style="color: var(--text-muted);">DKIM</span><span style="color: var(--success);">${fmtPct(al.dkim_pass_rate)}</span></div>
         </div>
         <div style="padding: 0 var(--sp-3) var(--sp-3);">
-          <a href="/file/${file.report_id}" class="btn" style="font-size: 11px; padding: 6px 12px; display: inline-block; text-decoration: none;">View full details →</a>
+          <a href="/file/${file.report_id}" class="btn" style="font-size: 11px; padding: var(--sp-1) var(--sp-3); display: inline-block; text-decoration: none;">View details →</a>
         </div>
       </div>`;
     }
