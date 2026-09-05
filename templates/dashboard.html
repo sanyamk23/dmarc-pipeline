@@ -8,10 +8,10 @@
 </head>
 <body>
   <header class="topbar">
-    <div class="topbar-brand">
+    <a href="/" class="topbar-brand">
       <div class="topbar-logo">D</div>
       <span>DMARC Pipeline</span>
-    </div>
+    </a>
     <nav class="topbar-nav">
       <a href="#upload">Ingest</a>
       <a href="#stats">Overview</a>
@@ -21,29 +21,30 @@
   </header>
 
   <div class="container">
-    <!-- ── Hero / Story ───────────────────────────────────────────────────── -->
+    <!-- ── Hero (signature moment) ───────────────────────────────────────── -->
     <section class="hero">
-      <div class="hero-badge">
-        <span>●</span> Email authentication monitoring
-      </div>
-      <h1 class="hero-title">Every day, thousands of emails<br/>claim to be you.</h1>
+      <div class="hero-label">Email authentication monitoring</div>
+      <h1 class="hero-title">See who's<br/><em>sending email</em><br/>as you.</h1>
       <p class="hero-subtitle">
-        Phishers spoof your domain. Mail providers forward your messages and break SPF.
-        Your DMARC reports hold the answer. Most teams never open them.
-        We built this so you don't have to wonder.
+        Phishers spoof your domain. Legitimate services break SPF when they forward your mail.
+        Your DMARC reports hold the answer. Most teams never read them.
       </p>
+      <div class="hero-cta">
+        <a href="#upload" class="btn">Ingest your first report</a>
+        <a href="#stats" class="btn btn-ghost">View overview</a>
+      </div>
       <div class="hero-stats">
         <div class="hero-stat">
           <div class="hero-stat-value" id="hero-reports">0</div>
-          <div class="hero-stat-label">Reports analyzed</div>
+          <div class="hero-stat-label">Reports</div>
         </div>
         <div class="hero-stat">
           <div class="hero-stat-value" id="hero-messages">0</div>
-          <div class="hero-stat-label">Messages evaluated</div>
+          <div class="hero-stat-label">Messages</div>
         </div>
         <div class="hero-stat">
           <div class="hero-stat-value" id="hero-ips">0</div>
-          <div class="hero-stat-label">Unique senders</div>
+          <div class="hero-stat-label">Senders</div>
         </div>
       </div>
     </section>
@@ -52,15 +53,15 @@
     <section id="upload" class="card upload-card">
       <div class="card-header">
         <div class="card-title">Ingest report</div>
-        <span class="badge info">.zip / .xml / .xml.gz</span>
+        <span class="badge info">.zip · .xml · .xml.gz</span>
       </div>
       <div class="card-body">
         <form id="upload-form">
           <div id="drop-zone" class="drop-zone">
             <div class="drop-zone-content">
-              <span class="drop-icon">📬</span>
-              <span class="drop-text">Drop your DMARC report here</span>
-              <span class="drop-or">or use the file picker</span>
+              <span class="drop-icon">↓</span>
+              <span class="drop-text">Drop your DMARC report</span>
+              <span class="drop-or">or</span>
               <label class="browse-btn">
                 Browse files
                 <input type="file" id="file-input" accept=".zip,.xml,.xml.gz" hidden />
@@ -68,7 +69,7 @@
               <p id="file-name" class="file-name"></p>
             </div>
           </div>
-          <div class="upload-actions">
+          <div style="display: flex; align-items: center; gap: var(--sp-3); margin-top: var(--sp-3);">
             <button type="submit" id="upload-btn" disabled>Ingest</button>
             <p id="upload-status" class="status"></p>
           </div>
@@ -104,10 +105,10 @@
     <section id="reports" class="card">
       <div class="card-header">
         <div class="card-title">Report envelopes</div>
-        <span id="reports-count" class="badge info">0 total</span>
+        <span id="reports-count" class="badge info">0</span>
       </div>
       <div class="table-wrap">
-        <table id="reports-table">
+        <table>
           <thead>
             <tr>
               <th>ID</th>
@@ -120,7 +121,7 @@
               <th></th>
             </tr>
           </thead>
-          <tbody></tbody>
+          <tbody id="reports-table"></tbody>
         </table>
       </div>
     </section>
@@ -129,7 +130,7 @@
     <section class="card" id="records-section" hidden>
       <div class="card-header">
         <div class="card-title">Records for Report #<span id="records-report-id"></span></div>
-        <div class="filters">
+        <div style="display: flex; gap: var(--sp-2);">
           <select id="result-filter">
             <option value="">All results</option>
             <option value="pass">Aligned only</option>
@@ -138,7 +139,7 @@
         </div>
       </div>
       <div class="table-wrap">
-        <table id="records-table">
+        <table>
           <thead>
             <tr>
               <th>Source IP</th>
@@ -149,7 +150,7 @@
               <th>SPF</th>
             </tr>
           </thead>
-          <tbody></tbody>
+          <tbody id="records-table"></tbody>
         </table>
       </div>
     </section>
@@ -157,7 +158,7 @@
     <!-- ── Upload results ─────────────────────────────────────────────────── -->
     <section class="card" id="upload-results-card" hidden>
       <div class="card-header">
-        <div class="card-title">Analysis results</div>
+        <div class="card-title">Analysis</div>
         <span id="upload-results-filename" class="badge info"></span>
       </div>
       <div id="upload-results" class="card-body"></div>
