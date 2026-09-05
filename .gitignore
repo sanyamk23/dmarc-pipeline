@@ -18,3 +18,8 @@ quarantine/
 
 # Env (keep .env for local dev, ignore local overrides)
 .env.local
+
+# Gmail OAuth (sensitive credentials)
+credentials*.json
+token*.json
+.gmail-credentials/
