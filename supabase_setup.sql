@@ -42,12 +42,21 @@ CREATE TABLE IF NOT EXISTS dmarc_records (
     spf_auth_json JSONB DEFAULT '[]'::jsonb
 );
 
--- ── Indexes for common queries ──────────────────────────────────────────────
+-- ── Gmail accounts table (OAuth) ─────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS gmail_accounts (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    email VARCHAR(255) UNIQUE NOT NULL,
+    credentials_json JSONB DEFAULT '{}'::jsonb,
+    token_json JSONB DEFAULT '{}'::jsonb,
+    is_active BOOLEAN DEFAULT TRUE,
+    last_sync TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ── Indexes ──────────────────────────────────────────────────────────────────
 CREATE INDEX IF NOT EXISTS idx_reports_domain ON dmarc_reports(domain);
 CREATE INDEX IF NOT EXISTS idx_reports_date_end ON dmarc_reports(date_end DESC);
 CREATE INDEX IF NOT EXISTS idx_records_report_id ON dmarc_records(report_id);
 CREATE INDEX IF NOT EXISTS idx_records_source_ip ON dmarc_records(source_ip);
-
--- ── Row Level Security (optional, for future auth) ──────────────────────────
--- ALTER TABLE dmarc_reports ENABLE ROW LEVEL SECURITY;
--- ALTER TABLE dmarc_records ENABLE ROW LEVEL SECURITY;
+CREATE INDEX IF NOT EXISTS idx_gmail_accounts_email ON gmail_accounts(email);
+CREATE INDEX IF NOT EXISTS idx_gmail_accounts_active ON gmail_accounts(is_active);

@@ -76,6 +76,11 @@ app = FastAPI(
 
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
+# ── OAuth routes ───────────────────────────────────────────────────────────────
+
+from api.oauth_routes import router as oauth_router
+app.include_router(oauth_router)
+
 
 # ── Middleware ─────────────────────────────────────────────────────────────────
 

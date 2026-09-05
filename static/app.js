@@ -321,9 +321,77 @@ $$('.btn').forEach(btn => {
   });
 });
 
+// ── Gmail accounts ─────────────────────────────────────────────────────────────
+
+async function loadAccounts() {
+  try {
+    const accounts = await fetch('/oauth/accounts').then(r => r.json());
+    const container = $('#accounts-list');
+
+    if (accounts.length === 0) {
+      container.innerHTML = `
+        <div style="text-align: center; padding: var(--sp-6);">
+          <p style="color: var(--text-muted); margin-bottom: var(--sp-3);">
+            Connect your Gmail to automatically ingest DMARC reports as they arrive.
+          </p>
+          <a href="/oauth/start" class="btn">Connect Gmail Account</a>
+        </div>`;
+      return;
+    }
+
+    let html = '<div style="display: grid; gap: var(--sp-2);">';
+    for (const acc of accounts) {
+      html += `
+        <div style="display: flex; align-items: center; justify-content: space-between; padding: var(--sp-3); background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--r-md);">
+          <div style="display: flex; align-items: center; gap: var(--sp-3);">
+            <div style="width: 32px; height: 32px; background: var(--surface-3); border-radius: 50%; display: grid; place-items: center; font-size: 14px;">✉</div>
+            <div>
+              <div style="font-family: var(--font-mono); font-size: 13px; font-weight: 500;">${acc.email}</div>
+              <div style="font-size: 11px; color: var(--text-muted);">${acc.last_sync ? 'Last sync: ' + fmtDate(acc.last_sync) : 'Never synced'}</div>
+            </div>
+          </div>
+          <div style="display: flex; gap: var(--sp-2);">
+            <button class="btn" style="font-size: 11px; padding: 4px 10px;" onclick="syncAccount(${acc.id})">Sync now</button>
+            <button class="btn btn-ghost" style="font-size: 11px; padding: 4px 10px;" onclick="disconnectAccount(${acc.id})">Disconnect</button>
+          </div>
+        </div>`;
+    }
+    html += '</div>';
+    container.innerHTML = html;
+  } catch (e) {
+    // OAuth not configured yet — show connect prompt
+    $('#accounts-list').innerHTML = `
+      <div style="text-align: center; padding: var(--sp-6);">
+        <p style="color: var(--text-muted); margin-bottom: var(--sp-3);">
+          Connect your Gmail to automatically ingest DMARC reports as they arrive.
+        </p>
+        <a href="/oauth/start" class="btn">Connect Gmail Account</a>
+      </div>`;
+  }
+}
+
+async function syncAccount(id) {
+  try {
+    await fetch(`/oauth/accounts/${id}/sync`, { method: 'POST' });
+    await Promise.all([loadStats(), loadReports(), loadAccounts()]);
+  } catch (e) {
+    alert('Sync failed: ' + e.message);
+  }
+}
+
+async function disconnectAccount(id) {
+  if (!confirm('Disconnect this account?')) return;
+  try {
+    await fetch(`/oauth/accounts/${id}`, { method: 'DELETE' });
+    loadAccounts();
+  } catch (e) {
+    alert('Failed: ' + e.message);
+  }
+}
+
 // ── Init ──────────────────────────────────────────────────────────────────────
 
 (async function init() {
-  await Promise.all([loadStats(), loadReports()]);
+  await Promise.all([loadStats(), loadReports(), loadAccounts()]);
   initScrollReveals();
 })();
