@@ -14,17 +14,19 @@
     </a>
     <nav class="topbar-nav">
       <a href="#upload">Ingest</a>
-      <a href="#stats">Overview</a>
+      <a href="#overview">Overview</a>
       <a href="#reports">Reports</a>
       <a href="/analysis">Analysis</a>
     </nav>
   </header>
 
   <div class="container">
-    <!-- ── Hero: The signature moment ────────────────────────────────────── -->
+    <!-- ═══════════════════════════════════════════════════════════════════
+         HERO: The signature moment
+         ═══════════════════════════════════════════════════════════════════ -->
     <section class="hero">
       <div class="hero-eyebrow">
-        <span style="width: 6px; height: 6px; background: var(--success); border-radius: 50%; display: inline-block;"></span>
+        <span style="width:6px;height:6px;background:var(--accent);border-radius:50%;display:inline-block;"></span>
         Email authentication monitoring
       </div>
       <h1 class="hero-title">
@@ -34,11 +36,11 @@
       </h1>
       <p class="hero-subtitle">
         Phishers spoof your domain. Legitimate services break SPF when they forward your mail.
-        Your DMARC reports hold the answer. Most teams never read them — we built this so you don't have to wonder.
+        Your DMARC reports know the truth. Most teams never read them — we'll show you in 5 seconds.
       </p>
       <div class="hero-actions">
-        <a href="#upload" class="btn">Ingest your first report</a>
-        <a href="#stats" class="btn btn-ghost">View overview</a>
+        <a href="#upload" class="btn" style="padding: 14px 28px; font-size: 15px;">Upload your first report</a>
+        <a href="#overview" class="btn btn-ghost" style="padding: 14px 28px; font-size: 15px;">View overview</a>
       </div>
       <div class="hero-stats">
         <div class="hero-stat">
@@ -56,8 +58,10 @@
       </div>
     </section>
 
-    <!-- ── Upload: Conversational interaction ─────────────────────────────── -->
-    <section id="upload" class="card upload-card">
+    <!-- ═══════════════════════════════════════════════════════════════════
+         UPLOAD: The ingestion moment
+         ═══════════════════════════════════════════════════════════════════ -->
+    <section id="upload" class="card upload-card" style="scroll-margin-top: 80px;">
       <div class="card-header">
         <div class="card-title">Ingest report</div>
         <span class="badge info">.zip · .xml · .xml.gz</span>
@@ -65,10 +69,10 @@
       <div class="card-body">
         <form id="upload-form">
           <div id="drop-zone" class="drop-zone">
-            <div class="drop-zone-content">
+            <div style="position: relative;">
               <span class="drop-icon">↓</span>
               <span class="drop-text">Drop your DMARC report here</span>
-              <span class="drop-or">or</span>
+              <span class="drop-or">— or —</span>
               <label class="browse-btn">
                 Browse files
                 <input type="file" id="file-input" accept=".zip,.xml,.xml.gz" hidden />
@@ -76,7 +80,7 @@
               <p id="file-name" class="file-name"></p>
             </div>
           </div>
-          <div style="display: flex; align-items: center; gap: var(--sp-3); margin-top: var(--sp-3);">
+          <div style="display: flex; align-items: center; gap: var(--sp-3); margin-top: var(--sp-4);">
             <button type="submit" id="upload-btn" disabled>Ingest</button>
             <p id="upload-status" class="status"></p>
           </div>
@@ -84,32 +88,41 @@
       </div>
     </section>
 
-    <!-- ── Stats: Staggered reveal ────────────────────────────────────────── -->
-    <div id="stats" class="stat-strip">
-      <div class="stat-cell">
-        <div class="stat-label">Reports</div>
-        <div class="stat-value accent" id="stat-reports">–</div>
+    <!-- ═══════════════════════════════════════════════════════════════════
+         STAT STRIP: At-a-glance health
+         ═══════════════════════════════════════════════════════════════════ -->
+    <div id="overview" style="scroll-margin-top: 80px;">
+      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--sp-3);">
+        <h2 style="font-family: var(--font-body); font-size: 14px; font-weight: 500; color: var(--text-secondary);">Overview</h2>
       </div>
-      <div class="stat-cell">
-        <div class="stat-label">Records</div>
-        <div class="stat-value" id="stat-records">–</div>
-      </div>
-      <div class="stat-cell">
-        <div class="stat-label">Messages</div>
-        <div class="stat-value" id="stat-messages">–</div>
-      </div>
-      <div class="stat-cell">
-        <div class="stat-label">Aligned</div>
-        <div class="stat-value success" id="stat-pass">–</div>
-      </div>
-      <div class="stat-cell">
-        <div class="stat-label">Failed</div>
-        <div class="stat-value danger" id="stat-fail">–</div>
+      <div class="stat-strip">
+        <div class="stat-cell">
+          <div class="stat-label">Reports</div>
+          <div class="stat-value accent" id="stat-reports">–</div>
+        </div>
+        <div class="stat-cell">
+          <div class="stat-label">Records</div>
+          <div class="stat-value" id="stat-records">–</div>
+        </div>
+        <div class="stat-cell">
+          <div class="stat-label">Messages</div>
+          <div class="stat-value" id="stat-messages">–</div>
+        </div>
+        <div class="stat-cell">
+          <div class="stat-label">Aligned</div>
+          <div class="stat-value success" id="stat-pass">–</div>
+        </div>
+        <div class="stat-cell">
+          <div class="stat-label">Failed</div>
+          <div class="stat-value danger" id="stat-fail">–</div>
+        </div>
       </div>
     </div>
 
-    <!-- ── Reports table ──────────────────────────────────────────────────── -->
-    <section id="reports" class="card">
+    <!-- ═══════════════════════════════════════════════════════════════════
+         REPORTS TABLE: The evidence
+         ═══════════════════════════════════════════════════════════════════ -->
+    <section id="reports" class="card" style="scroll-margin-top: 80px;">
       <div class="card-header">
         <div class="card-title">Report envelopes</div>
         <span id="reports-count" class="badge info">0</span>
@@ -133,15 +146,19 @@
       </div>
     </section>
 
-    <!-- ── Records detail ─────────────────────────────────────────────────── -->
-    <section class="card" id="records-section" hidden>
+    <!-- ═══════════════════════════════════════════════════════════════════
+         RECORDS DETAIL: Drilled-down view
+         ═══════════════════════════════════════════════════════════════════ -->
+    <section class="card" id="records-section" hidden style="scroll-margin-top: 80px;">
       <div class="card-header">
         <div class="card-title">Records for Report #<span id="records-report-id"></span></div>
-        <select id="result-filter">
-          <option value="">All results</option>
-          <option value="pass">Aligned only</option>
-          <option value="fail">Failed only</option>
-        </select>
+        <div style="display: flex; gap: var(--sp-2);">
+          <select id="result-filter">
+            <option value="">All results</option>
+            <option value="pass">Aligned only</option>
+            <option value="fail">Failed only</option>
+          </select>
+        </div>
       </div>
       <div class="table-wrap">
         <table>
@@ -160,10 +177,12 @@
       </div>
     </section>
 
-    <!-- ── Upload results ─────────────────────────────────────────────────── -->
-    <section class="card" id="upload-results-card" hidden>
+    <!-- ═══════════════════════════════════════════════════════════════════
+         UPLOAD RESULTS: Post-ingest analysis
+         ═══════════════════════════════════════════════════════════════════ -->
+    <section class="card" id="upload-results-card" hidden style="scroll-margin-top: 80px;">
       <div class="card-header">
-        <div class="card-title">Analysis</div>
+        <div class="card-title">Analysis results</div>
         <span id="upload-results-filename" class="badge info"></span>
       </div>
       <div id="upload-results" class="card-body"></div>
