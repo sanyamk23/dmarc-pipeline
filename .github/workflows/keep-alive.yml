@@ -11,10 +11,10 @@ jobs:
   ping:
     runs-on: ubuntu-latest
     steps:
-      - name: Ping health endpoint
+      - name: Ping health endpoint (GET)
         run: |
           echo "Pinging health endpoint at $(date -u)"
-          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 https://dmarc-pipeline.onrender.com/health)
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 -X GET https://dmarc-pipeline.onrender.com/health)
           echo "HTTP Status: $HTTP_CODE"
           if [ "$HTTP_CODE" = "200" ]; then
             echo "✅ Service is alive"

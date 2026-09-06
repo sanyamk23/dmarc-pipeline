@@ -105,6 +105,7 @@ async def log_requests(request: Request, call_next):
 
 
 @app.get("/health", include_in_schema=False)
+@app.head("/health", include_in_schema=False)
 async def health() -> dict:
     return {"status": "ok", "version": "1.0.0"}
 
