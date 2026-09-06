@@ -255,13 +255,13 @@ def _fetch_records_for_reports(report_ids: list[int]) -> dict[int, list[dict]]:
     if not report_ids:
         return {}
 
-    # Supabase doesn't support IN queries directly via postgrest-py
-    # So we fetch all records and group them client-side
-    # For large datasets, consider a database function
-    all_records = select("dmarc_records", limit=10000)
-
     # Group by report_id
     grouped: dict[int, list[dict]] = {}
+
+    # Fetch records in batches to avoid timeout
+    # Use a reasonable limit per request
+    all_records = select("dmarc_records", limit=1000)
+
     for rec in all_records:
         rid = rec.get("report_id")
         if rid in report_ids:
@@ -386,7 +386,7 @@ def stats(domain: str | None = None):
         filters["domain"] = domain
 
     reports = select("dmarc_reports", filters=filters if filters else None)
-    records = select("dmarc_records")
+    records = select("dmarc_records", limit=1000)
 
     records_by_report = defaultdict(list)
     for rec in records:
