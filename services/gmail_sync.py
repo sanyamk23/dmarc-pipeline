@@ -24,11 +24,12 @@ from services.oauth import get_valid_access_token
 logger = logging.getLogger("dmarc.gmail_sync")
 
 GMAIL_API_BASE = "https://gmail.googleapis.com/gmail/v1/users/me"
-# Broad search query — we verify content before processing anyway
-# This catches all DMARC reports regardless of subject format
-QUERY = os.environ.get("GMAIL_QUERY", "has:attachment newer_than:7d (dmarc OR \"aggregate report\" OR \"Report Domain\" OR \"authentication report\")")
+# Broad search query — searches ALL mail (not just INBOX)
+# This catches all DMARC reports regardless of subject format or folder
+# The attachment name pattern (domain!domain!numbers!numbers.zip) is unique to DMARC
+QUERY = os.environ.get("GMAIL_QUERY", "has:attachment newer_than:30d (dmarc OR \"aggregate report\" OR \"Report Domain\" OR \"authentication report\" OR \"DMARC Report\" OR \"dmarc-report\")")
 # Backfill: how many days to scan when connecting a new account
-BACKFILL_DAYS = int(os.environ.get("GMAIL_BACKFILL_DAYS", "10"))
+BACKFILL_DAYS = int(os.environ.get("GMAIL_BACKFILL_DAYS", "30"))
 
 
 async def sync_account_emails(account: dict, backfill: bool = False) -> int:
@@ -42,7 +43,7 @@ async def sync_account_emails(account: dict, backfill: bool = False) -> int:
 
     # Build query based on mode
     if backfill:
-        query = f"has:attachment newer_than:{BACKFILL_DAYS}d (dmarc OR \"aggregate report\" OR \"Report Domain\" OR \"authentication report\")"
+        query = f"has:attachment newer_than:{BACKFILL_DAYS}d (dmarc OR \"aggregate report\" OR \"Report Domain\" OR \"authentication report\" OR \"DMARC Report\")"
         mode_label = "backfill"
     else:
         query = QUERY
