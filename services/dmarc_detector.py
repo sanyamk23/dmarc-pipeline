@@ -1,18 +1,23 @@
-"""DMARC report detector — multi-layer verification.
+"""DMARC report detector — content-first verification.
 
-Goal: Zero false positives, zero false negatives.
+PHILOSOPHY:
+  Content (Layer 4) is the ONLY ground truth.
+  If XML parses as a valid DMARC aggregate report → it IS a DMARC report.
+  Sender/subject/filename are confidence indicators, not gates.
 
-A file is only processed as a DMARC report if it passes ALL layers:
-  Layer 1: Sender verification (known DMARC reporters)
-  Layer 2: Subject line pattern matching
-  Layer 3: Attachment filename pattern (RFC 7489)
-  Layer 4: XML content validation (ground truth)
+This ensures:
+  - Zero false positives: invalid XML is never processed
+  - Zero false negatives: any valid DMARC report is accepted, regardless of sender
 
-Each layer is independent — any single rejection means "not a DMARC report".
+LAYERS:
+  Layer 4 (content): HARD GATE — must pass
+  Layers 1-3 (metadata): SOFT — used for confidence scoring and logging only
 """
 
 from __future__ import annotations
 
+import gzip
+import io
 import logging
 import re
 import zipfile
@@ -24,173 +29,8 @@ from xml.etree import ElementTree as ET
 logger = logging.getLogger("dmarc.detector")
 
 # ═══════════════════════════════════════════════════════════════════════════
-# LAYER 1: Sender Verification
+# LAYER 4: CONTENT VALIDATION (GROUND TRUTH — THE ONLY HARD GATE)
 # ═══════════════════════════════════════════════════════════════════════════
-
-# Known DMARC aggregate report senders.
-# These are the actual domains that send DMARC reports from major providers.
-# Source: each provider's documentation + observed report patterns.
-KNOWN_REPORTER_DOMAINS = {
-    # Google
-    "google.com",
-    "googlemail.com",
-    "noreply-dmarc-support.google.com",
-    # Microsoft / Outlook / Hotmail
-    "microsoft.com",
-    "outlook.com",
-    "hotmail.com",
-    "live.com",
-    "msn.com",
-    "enterprise.protection.outlook.com",
-    # Yahoo
-    "yahoo.com",
-    "yahoogroups.com",
-    "ymail.com",
-    "rocketmail.com",
-    # Amazon SES
-    "amazonses.com",
-    "amazon.com",
-    # Other major reporters
-    "mail.ru",
-    "yandex.ru",
-    "zoho.com",
-    "proofpoint.com",
-    "mimecast.com",
-    "barracuda.com",
-    "pphosted.com",       # Proofpoint
-    "emailsrvr.com",      # Rackspace
-    "sendgrid.net",       # Twilio SendGrid
-    "mailgun.org",        # Mailgun
-    "sparkpostmail.com",  # SparkPost
-    "mandrillapp.com",    # Mailchimp Mandrill
-    "facebook.com",
-    "linkedin.com",
-    "twitter.com",
-    "x.com",
-    "dropbox.com",
-    "slack.com",
-    "atlassian.net",
-    "github.com",
-    "gitlab.com",
-    # Add more as discovered — these don't expire or change often
-}
-
-# Patterns that match sender domains (for subdomains and variations)
-KNOWN_REPORTER_PATTERNS = [
-    re.compile(r"google\.com$"),
-    re.compile(r"microsoft\.com$"),
-    re.compile(r"outlook\.com$"),
-    re.compile(r"amazonses\.com$"),
-    re.compile(r"yahoo\.com$"),
-    re.compile(r"proofpoint\.com$"),
-    re.compile(r"mimecast\.com$"),
-    re.compile(r"barracudanetworks\.com$"),
-    re.compile(r"sendgrid\.net$"),
-    re.compile(r"mailgun\.net$"),
-    re.compile(r"zoho\.com$"),
-]
-
-
-def verify_sender(sender: str) -> bool:
-    """Check if email sender is a known DMARC aggregate reporter."""
-    sender_lower = sender.lower().strip()
-
-    # Extract domain from email (handle "Name <email@domain.com>" format)
-    email_match = re.search(r"<([^>]+)>", sender_lower)
-    if email_match:
-        sender_lower = email_match.group(1)
-
-    # Extract domain
-    if "@" in sender_lower:
-        domain = sender_lower.split("@")[-1]
-    else:
-        domain = sender_lower
-
-    # Direct match against known domains
-    if domain in KNOWN_REPORTER_DOMAINS:
-        return True
-
-    # Pattern match (for subdomains like mail.google.com)
-    for pattern in KNOWN_REPORTER_PATTERNS:
-        if pattern.search(domain):
-            return True
-
-    return False
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# LAYER 2: Subject Line Pattern Matching
-# ═══════════════════════════════════════════════════════════════════════════
-
-# DMARC aggregate reports have a very specific subject format:
-#   "Report Domain: <domain> Submitter: <org>"
-#   "Report Domain: <domain> Submitter: <org> Report-ID: <id>"
-#   "DMARC Report for <domain>"
-#   "<org> DMARC Report - <domain>"
-DMARC_SUBJECT_PATTERNS = [
-    # Standard format from Google, Microsoft, etc.
-    re.compile(r"report\s+domain\s*:.*submitter\s*:", re.IGNORECASE),
-    # Alternative format
-    re.compile(r"dmarc\s+report\s+(for|from|domain)", re.IGNORECASE),
-    # Amazon SES format
-    re.compile(r"dmarc.*aggregate.*report", re.IGNORECASE),
-    # Some providers use this
-    re.compile(r"submitter\s*:.*report\s*(id|domain)", re.IGNORECASE),
-    # Forensic reports (different from aggregate, but related)
-    re.compile(r"dmarc.*forensic.*report", re.IGNORECASE),
-]
-
-
-def verify_subject(subject: str) -> bool:
-    """Check if email subject matches DMARC report patterns."""
-    for pattern in DMARC_SUBJECT_PATTERNS:
-        if pattern.search(subject):
-            return True
-    return False
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# LAYER 3: Attachment Filename Pattern (RFC 7489)
-# ═══════════════════════════════════════════════════════════════════════════
-
-# DMARC aggregate report attachments follow this naming convention:
-#   <report-domain>!<submitter-domain>!<start-timestamp>!<end-timestamp>.<ext>
-#
-# Examples:
-#   example.com!google.com!1788307200!1788393599.zip
-#   example.com!microsoft.com!1788134400!1788220800.xml.gz
-#
-# The timestamps are Unix epoch seconds.
-
-DMARC_FILENAME_PATTERN = re.compile(
-    r"^"
-    r"[a-zA-Z0-9][\w\-\.]*"          # report domain
-    r"!"
-    r"[a-zA-Z0-9][\w\-\.]*"          # submitter domain
-    r"!"
-    r"\d{8,12}"                       # start timestamp (epoch seconds)
-    r"!"
-    r"\d{8,12}"                       # end timestamp (epoch seconds)
-    r"\.(zip|xml|gz|xml\.gz)$"        # extension
-    ,
-    re.IGNORECASE,
-)
-
-
-def verify_filename(filename: str) -> bool:
-    """Check if attachment filename matches DMARC report naming convention."""
-    return bool(DMARC_FILENAME_PATTERN.match(filename))
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# LAYER 4: XML Content Validation (Ground Truth)
-# ═══════════════════════════════════════════════════════════════════════════
-
-# A valid DMARC aggregate report XML must have:
-#   - Root element: <feedback>
-#   - Child: <report_metadata> with <org_name> and <report_id>
-#   - Child: <policy_published> with <domain>
-#   - Child: <record> elements (at least one)
 
 REQUIRED_XML_ELEMENTS = [
     "report_metadata",
@@ -200,13 +40,17 @@ REQUIRED_XML_ELEMENTS = [
 
 
 def verify_xml_content(xml_bytes: bytes) -> bool:
-    """Parse XML and verify it's a valid DMARC aggregate report."""
+    """Parse XML and verify it's a valid DMARC aggregate report.
+
+    This is the GROUND TRUTH check. If this passes, the file is
+    definitively a DMARC aggregate report — no other checks needed.
+    """
     try:
         root = ET.fromstring(xml_bytes)
     except ET.ParseError:
         return False
 
-    # Must have <feedback> root
+    # Must have <feedback> root element
     if root.tag != "feedback":
         return False
 
@@ -215,7 +59,7 @@ def verify_xml_content(xml_bytes: bytes) -> bool:
         if root.find(required) is None:
             return False
 
-    # Must have at least one <record>
+    # Must have at least one <record> with auth results
     records = root.findall("record")
     if len(records) == 0:
         return False
@@ -239,24 +83,27 @@ def verify_xml_content(xml_bytes: bytes) -> bool:
 
 def verify_zip_content(zip_bytes: bytes) -> bool:
     """Verify a zip file contains a valid DMARC report XML."""
-    import io
-
     try:
         with zipfile.ZipFile(io.BytesIO(zip_bytes), "r") as zf:
-            # Find XML files in the archive
             xml_files = [n for n in zf.namelist() if n.lower().endswith(".xml")]
-
             if not xml_files:
                 return False
-
-            # Verify at least one XML file is a valid DMARC report
+            # At least one XML must be a valid DMARC report
             for xml_name in xml_files:
                 xml_data = zf.read(xml_name)
                 if verify_xml_content(xml_data):
                     return True
-
             return False
     except (zipfile.BadZipFile, Exception):
+        return False
+
+
+def verify_gz_content(gz_bytes: bytes) -> bool:
+    """Verify a gzip file contains a valid DMARC report XML."""
+    try:
+        data = gzip.decompress(gz_bytes)
+        return verify_xml_content(data)
+    except Exception:
         return False
 
 
@@ -268,17 +115,60 @@ def verify_file_content(filepath: Path) -> bool:
         return verify_xml_content(filepath.read_bytes())
 
     if suffix == ".gz" or str(filepath).endswith(".xml.gz"):
-        import gzip
-        try:
-            data = gzip.decompress(filepath.read_bytes())
-            return verify_xml_content(data)
-        except Exception:
-            return False
+        return verify_gz_content(filepath.read_bytes())
 
     if suffix == ".zip":
         return verify_zip_content(filepath.read_bytes())
 
     return False
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# LAYERS 1-3: METADATA CHECKS (SOFT — CONFIDENCE SCORING ONLY)
+# ═══════════════════════════════════════════════════════════════════════════
+
+# These are NOT gates. They only contribute to a confidence score.
+# A file that fails these but passes Layer 4 is STILL a valid DMARC report.
+
+KNOWN_REPORTER_DOMAINS = {
+    "google.com", "googlemail.com", "microsoft.com", "outlook.com",
+    "hotmail.com", "live.com", "msn.com", "yahoo.com", "ymail.com",
+    "amazonses.com", "mail.ru", "zoho.com", "proofpoint.com",
+    "mimecast.com", "barracuda.com", "sendgrid.net", "mailgun.org",
+}
+
+DMARC_SUBJECT_PATTERNS = [
+    re.compile(r"report\s+domain\s*:.*submitter\s*:", re.IGNORECASE),
+    re.compile(r"dmarc\s+report", re.IGNORECASE),
+]
+
+DMARC_FILENAME_PATTERN = re.compile(
+    r"^[a-zA-Z0-9][\w\-\.]*![a-zA-Z0-9][\w\-\.]*!\d{8,12}!\d{8,12}\.(zip|xml|gz)$",
+    re.IGNORECASE,
+)
+
+
+def check_sender(sender: str) -> bool:
+    """Soft check: Is sender a known DMARC reporter?"""
+    sender_lower = sender.lower()
+    email_match = re.search(r"<([^>]+)>", sender_lower)
+    if email_match:
+        sender_lower = email_match.group(1)
+    if "@" in sender_lower:
+        domain = sender_lower.split("@")[-1]
+    else:
+        domain = sender_lower
+    return domain in KNOWN_REPORTER_DOMAINS
+
+
+def check_subject(subject: str) -> bool:
+    """Soft check: Does subject match DMARC report patterns?"""
+    return any(p.search(subject) for p in DMARC_SUBJECT_PATTERNS)
+
+
+def check_filename(filename: str) -> bool:
+    """Soft check: Does filename match RFC 7489 convention?"""
+    return bool(DMARC_FILENAME_PATTERN.match(filename))
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -291,8 +181,9 @@ class DetectionResult:
     """Result of DMARC report detection."""
     is_dmarc_report: bool
     confidence: str  # "high", "medium", "low"
-    layer_results: dict[str, bool] = field(default_factory=dict)
-    reason: str = ""
+    content_valid: bool
+    metadata_score: int  # 0-3 (how many soft checks passed)
+    reason: str
 
 
 def detect_dmarc_report(
@@ -300,63 +191,74 @@ def detect_dmarc_report(
     subject: str = "",
     filename: str = "",
     file_path: Optional[Path] = None,
+    file_bytes: Optional[bytes] = None,
 ) -> DetectionResult:
     """
-    Multi-layer DMARC report detection.
+    Detect if a file is a DMARC aggregate report.
 
-    Returns DetectionResult with:
-    - is_dmarc_report: True only if ALL applicable layers pass
-    - confidence: "high" (all 4 layers), "medium" (3 layers), "low" (<3)
-    - layer_results: which layers passed/failed
-    - reason: human-readable explanation
+    ARCHITECTURE:
+    - Layer 4 (content) is the ONLY hard gate
+    - Layers 1-3 (metadata) are soft checks for confidence scoring
+    - If content validates → IS a DMARC report (regardless of metadata)
+    - If content fails → NOT a DMARC report (regardless of metadata)
     """
-    layers = {}
+    # ── Layer 4: Content validation (HARD GATE) ─────────────────────────
+    content_valid = False
 
-    # Layer 1: Sender
-    if sender:
-        layers["sender"] = verify_sender(sender)
-
-    # Layer 2: Subject
-    if subject:
-        layers["subject"] = verify_subject(subject)
-
-    # Layer 3: Filename
-    if filename:
-        layers["filename"] = verify_filename(filename)
-
-    # Layer 4: Content (ground truth — most reliable)
     if file_path and file_path.exists():
-        layers["content"] = verify_file_content(file_path)
+        content_valid = verify_file_content(file_path)
+    elif file_bytes:
+        # Determine type from filename or try all
+        suffix = Path(filename).suffix.lower() if filename else ""
+        if suffix == ".xml":
+            content_valid = verify_xml_content(file_bytes)
+        elif suffix == ".zip":
+            content_valid = verify_zip_content(file_bytes)
+        elif suffix == ".gz":
+            content_valid = verify_gz_content(file_bytes)
+        else:
+            # Try all formats
+            content_valid = (
+                verify_xml_content(file_bytes)
+                or verify_zip_content(file_bytes)
+                or verify_gz_content(file_bytes)
+            )
 
-    # Decision logic
-    passed = sum(1 for v in layers.values() if v)
-    total = len(layers)
+    # ── Layers 1-3: Metadata checks (SOFT — confidence only) ────────────
+    metadata_score = 0
+    if sender and check_sender(sender):
+        metadata_score += 1
+    if subject and check_subject(subject):
+        metadata_score += 1
+    if filename and check_filename(filename):
+        metadata_score += 1
 
-    # Content validation is the ground truth — if it passes, it's definitely a DMARC report
-    if "content" in layers and layers["content"]:
+    # ── Decision ────────────────────────────────────────────────────────
+    if content_valid:
         is_report = True
-        confidence = "high"
-        reason = "Valid DMARC aggregate report XML confirmed"
-    # All layers must pass for high confidence
-    elif passed == total and total >= 3:
-        is_report = True
-        confidence = "high"
-        reason = f"All {total} verification layers passed"
-    # 2 out of 3 layers (without content check) = medium confidence
-    elif passed >= 2 and total >= 3 and "content" not in layers:
-        is_report = True
-        confidence = "medium"
-        reason = f"{passed}/{total} layers passed (content not verified yet)"
+        # Confidence based on metadata agreement
+        if metadata_score >= 2:
+            confidence = "high"
+            reason = f"Valid DMARC XML + {metadata_score}/3 metadata checks passed"
+        elif metadata_score >= 1:
+            confidence = "medium"
+            reason = "Valid DMARC XML (metadata partially matches)"
+        else:
+            confidence = "medium"
+            reason = "Valid DMARC XML (unusual sender/subject/filename — but content is definitive)"
     else:
         is_report = False
-        confidence = "low"
-        failed = [k for k, v in layers.items() if not v]
-        reason = f"Failed layers: {', '.join(failed)}"
+        confidence = "none"
+        if metadata_score >= 2:
+            reason = f"Metadata suggests DMARC ({metadata_score}/3) but content is NOT valid DMARC XML"
+        else:
+            reason = "Not a valid DMARC aggregate report"
 
     return DetectionResult(
         is_dmarc_report=is_report,
         confidence=confidence,
-        layer_results=layers,
+        content_valid=content_valid,
+        metadata_score=metadata_score,
         reason=reason,
     )
 
@@ -370,8 +272,8 @@ if __name__ == "__main__":
 
     if len(sys.argv) < 2:
         print("Usage:")
-        print("  python -m services.dmarc_detector --sender 'a@b.com' --subject 'Report Domain: x' --filename 'x!y!123!456.zip'")
         print("  python -m services.dmarc_detector --file /path/to/report.zip")
+        print("  python -m services.dmarc_detector --sender 'a@b.com' --subject 'DMARC' --filename 'x.zip'")
         sys.exit(1)
 
     import argparse
@@ -392,5 +294,6 @@ if __name__ == "__main__":
 
     print(f"Is DMARC report: {result.is_dmarc_report}")
     print(f"Confidence: {result.confidence}")
+    print(f"Content valid: {result.content_valid}")
+    print(f"Metadata score: {result.metadata_score}/3")
     print(f"Reason: {result.reason}")
-    print(f"Layers: {result.layer_results}")

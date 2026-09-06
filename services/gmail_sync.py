@@ -1,10 +1,10 @@
 """Gmail sync — fetches DMARC reports from connected accounts.
 
-Uses multi-layer detection to ensure zero false positives:
-  Layer 1: Sender verification (known DMARC reporters)
-  Layer 2: Subject line pattern matching
-  Layer 3: Attachment filename (RFC 7489 convention)
-  Layer 4: XML content validation (ground truth)
+Detection philosophy: Content is ground truth.
+- If XML parses as valid DMARC aggregate report → it IS a DMARC report
+- Sender/subject/filename are confidence indicators, NOT gates
+- Zero false positives: invalid XML never processed
+- Zero false negatives: any valid DMARC report accepted regardless of sender
 """
 
 from __future__ import annotations
@@ -12,7 +12,9 @@ from __future__ import annotations
 import base64
 import logging
 import os
+import tempfile
 import time
+from pathlib import Path
 
 from config import settings
 from services.dmarc_detector import detect_dmarc_report
@@ -21,7 +23,7 @@ from services.oauth import get_valid_access_token
 logger = logging.getLogger("dmarc.gmail_sync")
 
 GMAIL_API_BASE = "https://gmail.googleapis.com/gmail/v1/users/me"
-QUERY = os.environ.get("GMAIL_QUERY", "subject:DMARC has:attachment newer_than:1d")
+QUERY = os.environ.get("GMAIL_QUERY", "has:attachment newer_than:1d subject:(DMARC OR \"aggregate report\" OR \"authentication report\")")
 MARK_READ = os.environ.get("EMAIL_MARK_READ", "true").lower() == "true"
 
 
@@ -36,8 +38,8 @@ async def sync_account_emails(account: dict) -> int:
     headers = {"Authorization": f"Bearer {access_token}"}
     email = account.get("email", "unknown")
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        # Search for emails
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        # Search for emails (broad query — we verify with content)
         search_url = f"{GMAIL_API_BASE}/messages"
         params = {"q": QUERY}
         response = await client.get(search_url, headers=headers, params=params)
@@ -48,12 +50,12 @@ async def sync_account_emails(account: dict) -> int:
 
         messages = response.json().get("messages", [])
         if not messages:
-            logger.info("[%s] No new DMARC emails", email)
+            logger.info("[%s] No emails to check", email)
             return 0
 
-        logger.info("[%s] Found %d email(s) to check", email, len(messages))
+        logger.info("[%s] Checking %d email(s)", email, len(messages))
 
-        count = 0
+        saved = 0
         skipped = 0
 
         for msg_info in messages:
@@ -61,9 +63,7 @@ async def sync_account_emails(account: dict) -> int:
 
             # Get full message
             msg_url = f"{GMAIL_API_BASE}/messages/{msg_id}"
-            msg_resp = await client.get(
-                msg_url, headers=headers, params={"format": "full"}
-            )
+            msg_resp = await client.get(msg_url, headers=headers, params={"format": "full"})
 
             if msg_resp.status_code != 200:
                 continue
@@ -76,88 +76,67 @@ async def sync_account_emails(account: dict) -> int:
             sender = headers_map.get("From", "")
 
             # Find attachments
-            attachments_to_fetch = []
-            _find_attachments(msg.get("payload", {}), attachments_to_fetch)
+            attachments = []
+            _find_attachments(msg.get("payload", {}), attachments)
 
-            if not attachments_to_fetch:
+            if not attachments:
                 continue
 
             # Process each attachment
-            for att_info in attachments_to_fetch:
+            for att_info in attachments:
                 filename = att_info["filename"]
                 att_id = att_info["attachment_id"]
 
-                # Layer 1-3: Quick checks before downloading
-                result = detect_dmarc_report(
-                    sender=sender,
-                    subject=subject,
-                    filename=filename,
-                )
-
-                if not result.is_dmarc_report:
-                    logger.info(
-                        "[%s] Skipped: %s (reason: %s)",
-                        email,
-                        filename,
-                        result.reason,
-                    )
-                    skipped += 1
-                    continue
-
                 # Download attachment
-                att_url = (
-                    f"{GMAIL_API_BASE}/messages/{msg_id}"
-                    f"/attachments/{att_id}"
-                )
+                att_url = f"{GMAIL_API_BASE}/messages/{msg_id}/attachments/{att_id}"
                 att_resp = await client.get(att_url, headers=headers)
 
                 if att_resp.status_code != 200:
-                    logger.warning("[%s] Failed to fetch %s", email, filename)
+                    logger.warning("[%s] Failed to download %s", email, filename)
                     continue
 
-                # Decode
+                # Decode base64url
                 att_data = att_resp.json().get("data", "")
                 file_bytes = base64.urlsafe_b64decode(att_data)
 
-                # Layer 4: Content validation (ground truth)
-                from pathlib import Path
-                import tempfile
-
-                with tempfile.NamedTemporaryFile(suffix=Path(filename).suffix, delete=False) as tmp:
+                # Write to temp file for content verification
+                suffix = Path(filename).suffix if Path(filename).suffix else ".bin"
+                with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
                     tmp.write(file_bytes)
                     tmp_path = Path(tmp.name)
 
-                final_result = detect_dmarc_report(
+                # ── CONTENT-FIRST DETECTION ──────────────────────────────
+                result = detect_dmarc_report(
                     sender=sender,
                     subject=subject,
                     filename=filename,
                     file_path=tmp_path,
                 )
 
-                if not final_result.is_dmarc_report:
+                if result.is_dmarc_report:
+                    # Valid DMARC report — save it
+                    await _save_attachment(filename, file_bytes)
+                    saved += 1
                     logger.info(
-                        "[%s] Rejected after content check: %s (reason: %s)",
+                        "[%s] ✓ DMARC report: %s (confidence: %s, metadata: %d/3)",
                         email,
                         filename,
-                        final_result.reason,
+                        result.confidence,
+                        result.metadata_score,
                     )
+                else:
                     skipped += 1
-                    tmp_path.unlink(missing_ok=True)
-                    continue
+                    logger.debug(
+                        "[%s] Skipped: %s — %s",
+                        email,
+                        filename,
+                        result.reason,
+                    )
 
-                # All layers passed — save it
-                await _save_attachment(filename, file_bytes)
-                count += 1
+                # Cleanup temp file
                 tmp_path.unlink(missing_ok=True)
 
-                logger.info(
-                    "[%s] ✓ DMARC report saved: %s (confidence: %s)",
-                    email,
-                    filename,
-                    final_result.confidence,
-                )
-
-            # Mark as read
+            # Mark as read (we checked it — whether DMARC or not)
             if MARK_READ:
                 modify_url = f"{GMAIL_API_BASE}/messages/{msg_id}/modify"
                 await client.post(
@@ -166,14 +145,9 @@ async def sync_account_emails(account: dict) -> int:
                     json={"removeLabelIds": ["UNREAD"]},
                 )
 
-        logger.info(
-            "[%s] Sync complete: %d saved, %d skipped",
-            email,
-            count,
-            skipped,
-        )
+        logger.info("[%s] Sync complete: %d saved, %d skipped", email, saved, skipped)
 
-    return count
+    return saved
 
 
 def _find_attachments(payload: dict, results: list[dict]) -> None:
@@ -197,4 +171,4 @@ async def _save_attachment(filename: str, data: bytes) -> None:
     safe_name = f"{timestamp}_{filename}"
     filepath = reports_dir / safe_name
     filepath.write_bytes(data)
-    logger.info("Saved to: %s", filepath)
+    logger.info("Saved: %s", filepath)
