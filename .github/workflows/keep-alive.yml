@@ -2,9 +2,10 @@ name: Keep Render Alive
 
 on:
   schedule:
-    # Every 4 minutes (keeps Render from sleeping after 15 min)
-    - cron: '*/4 * * * *'
-  workflow_dispatch:  # Allow manual trigger
+    # Every 5 minutes (GitHub minimum is 5 min)
+    # Keeps Render from sleeping after 15 min of inactivity
+    - cron: '*/5 * * * *'
+  workflow_dispatch:  # Allow manual trigger from GitHub UI
 
 jobs:
   ping:
@@ -12,11 +13,13 @@ jobs:
     steps:
       - name: Ping health endpoint
         run: |
-          echo "Pinging health endpoint..."
-          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" https://dmarc-pipeline.onrender.com/health)
+          echo "Pinging health endpoint at $(date -u)"
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 https://dmarc-pipeline.onrender.com/health)
           echo "HTTP Status: $HTTP_CODE"
           if [ "$HTTP_CODE" = "200" ]; then
             echo "✅ Service is alive"
+            exit 0
           else
             echo "⚠️ Service returned $HTTP_CODE"
+            exit 1
           fi
