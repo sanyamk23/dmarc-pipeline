@@ -53,6 +53,15 @@ CREATE TABLE IF NOT EXISTS gmail_accounts (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- ── Processed emails table (track what we've checked) ────────────────────────
+CREATE TABLE IF NOT EXISTS processed_emails (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    account_id BIGINT REFERENCES gmail_accounts(id) ON DELETE CASCADE,
+    message_id VARCHAR(255) NOT NULL,
+    processed_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(account_id, message_id)
+);
+
 -- ── Indexes ──────────────────────────────────────────────────────────────────
 CREATE INDEX IF NOT EXISTS idx_reports_domain ON dmarc_reports(domain);
 CREATE INDEX IF NOT EXISTS idx_reports_date_end ON dmarc_reports(date_end DESC);
@@ -60,3 +69,4 @@ CREATE INDEX IF NOT EXISTS idx_records_report_id ON dmarc_records(report_id);
 CREATE INDEX IF NOT EXISTS idx_records_source_ip ON dmarc_records(source_ip);
 CREATE INDEX IF NOT EXISTS idx_gmail_accounts_email ON gmail_accounts(email);
 CREATE INDEX IF NOT EXISTS idx_gmail_accounts_active ON gmail_accounts(is_active);
+CREATE INDEX IF NOT EXISTS idx_processed_emails_lookup ON processed_emails(account_id, message_id);

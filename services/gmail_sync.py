@@ -17,14 +17,15 @@ import time
 from pathlib import Path
 
 from config import settings
+from models.processed_emails import is_processed, mark_processed
 from services.dmarc_detector import detect_dmarc_report
 from services.oauth import get_valid_access_token
 
 logger = logging.getLogger("dmarc.gmail_sync")
 
 GMAIL_API_BASE = "https://gmail.googleapis.com/gmail/v1/users/me"
-QUERY = os.environ.get("GMAIL_QUERY", "has:attachment newer_than:1d subject:(DMARC OR \"aggregate report\" OR \"authentication report\")")
-MARK_READ = os.environ.get("EMAIL_MARK_READ", "true").lower() == "true"
+# Search for unread emails only (since we can't mark as read with readonly scope)
+QUERY = os.environ.get("GMAIL_QUERY", "is:unread has:attachment newer_than:7d subject:(DMARC OR \"aggregate report\" OR \"authentication report\")")
 
 
 async def sync_account_emails(account: dict) -> int:
@@ -58,8 +59,17 @@ async def sync_account_emails(account: dict) -> int:
         saved = 0
         skipped = 0
 
+        account_id = account.get("id")
+
         for msg_info in messages:
             msg_id = msg_info["id"]
+
+            # Skip already processed messages
+            if is_processed(account_id, msg_id):
+                continue
+
+            # Mark as processed (even if not a DMARC report — we checked it)
+            mark_processed(account_id, msg_id)
 
             # Get full message
             msg_url = f"{GMAIL_API_BASE}/messages/{msg_id}"
@@ -135,15 +145,6 @@ async def sync_account_emails(account: dict) -> int:
 
                 # Cleanup temp file
                 tmp_path.unlink(missing_ok=True)
-
-            # Mark as read (we checked it — whether DMARC or not)
-            if MARK_READ:
-                modify_url = f"{GMAIL_API_BASE}/messages/{msg_id}/modify"
-                await client.post(
-                    modify_url,
-                    headers=headers,
-                    json={"removeLabelIds": ["UNREAD"]},
-                )
 
         logger.info("[%s] Sync complete: %d saved, %d skipped", email, saved, skipped)
 

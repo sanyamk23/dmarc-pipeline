@@ -29,9 +29,9 @@ CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
 # Override for production: https://your-domain.com/oauth/callback
 REDIRECT_URI = os.environ.get("OAUTH_REDIRECT_URI", "http://localhost:8000/oauth/callback")
 
-# Scopes we need
+# Scopes we need — READ ONLY, never send
 SCOPES = [
-    "https://www.googleapis.com/auth/gmail.modify",
+    "https://www.googleapis.com/auth/gmail.readonly",
     "https://www.googleapis.com/auth/userinfo.email",
 ]
 
