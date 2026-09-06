@@ -206,6 +206,7 @@ def list_reports(
     if domain:
         filters["domain"] = domain
 
+    # Fetch reports
     rows = select(
         "dmarc_reports",
         filters=filters if filters else None,
@@ -213,9 +214,17 @@ def list_reports(
         limit=limit,
     )
 
+    if not rows:
+        return []
+
+    # Fetch ALL records for these reports in ONE query
+    report_ids = [row["id"] for row in rows]
+    all_records = _fetch_records_for_reports(report_ids)
+
+    # Build result
     result = []
     for row in rows:
-        records = select("dmarc_records", filters={"report_id": row["id"]})
+        records = all_records.get(row["id"], [])
         pass_fail = _compute_pass_fail(records)
 
         result.append(
@@ -239,6 +248,28 @@ def list_reports(
             )
         )
     return result
+
+
+def _fetch_records_for_reports(report_ids: list[int]) -> dict[int, list[dict]]:
+    """Fetch records for multiple reports, grouped by report_id."""
+    if not report_ids:
+        return {}
+
+    # Supabase doesn't support IN queries directly via postgrest-py
+    # So we fetch all records and group them client-side
+    # For large datasets, consider a database function
+    all_records = select("dmarc_records", limit=10000)
+
+    # Group by report_id
+    grouped: dict[int, list[dict]] = {}
+    for rec in all_records:
+        rid = rec.get("report_id")
+        if rid in report_ids:
+            if rid not in grouped:
+                grouped[rid] = []
+            grouped[rid].append(rec)
+
+    return grouped
 
 
 def _compute_pass_fail(records: list[dict]) -> dict:
