@@ -104,9 +104,13 @@ async def oauth_callback(code: str = "", state: str = "", error: str = ""):
 
         logger.info("Gmail account connected: %s", email)
 
+        # Get account ID for backfill
+        account_id = account.get("id") if account else None
+
         # Trigger backfill in background (scan past 10 days)
-        import asyncio
-        asyncio.create_task(_trigger_backfill(account_id))
+        if account_id:
+            import asyncio
+            asyncio.create_task(_trigger_backfill(account_id))
 
         return RedirectResponse(url="/?oauth_success=true")
 
