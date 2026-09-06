@@ -24,8 +24,9 @@ from services.oauth import get_valid_access_token
 logger = logging.getLogger("dmarc.gmail_sync")
 
 GMAIL_API_BASE = "https://gmail.googleapis.com/gmail/v1/users/me"
-# Search query for regular sync (recent unread emails)
-QUERY = os.environ.get("GMAIL_QUERY", "is:unread has:attachment newer_than:7d subject:(DMARC OR \"aggregate report\" OR \"authentication report\")")
+# Broad search query — we verify content before processing anyway
+# This catches all DMARC reports regardless of subject format
+QUERY = os.environ.get("GMAIL_QUERY", "has:attachment newer_than:7d (dmarc OR \"aggregate report\" OR \"Report Domain\" OR \"authentication report\")")
 # Backfill: how many days to scan when connecting a new account
 BACKFILL_DAYS = int(os.environ.get("GMAIL_BACKFILL_DAYS", "10"))
 
@@ -41,7 +42,7 @@ async def sync_account_emails(account: dict, backfill: bool = False) -> int:
 
     # Build query based on mode
     if backfill:
-        query = f"has:attachment newer_than:{BACKFILL_DAYS}d subject:(DMARC OR \"aggregate report\" OR \"authentication report\")"
+        query = f"has:attachment newer_than:{BACKFILL_DAYS}d (dmarc OR \"aggregate report\" OR \"Report Domain\" OR \"authentication report\")"
         mode_label = "backfill"
     else:
         query = QUERY
@@ -57,7 +58,7 @@ async def sync_account_emails(account: dict, backfill: bool = False) -> int:
     async with httpx.AsyncClient(timeout=120.0) as client:
         # Search for emails (broad query — we verify with content)
         search_url = f"{GMAIL_API_BASE}/messages"
-        params = {"q": query}
+        params = {"q": query, "maxResults": 50}
         response = await client.get(search_url, headers=headers, params=params)
 
         if response.status_code != 200:
