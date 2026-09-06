@@ -89,11 +89,15 @@ async def sync_all_accounts() -> dict:
     return results
 
 
-async def run_loop() -> None:
-    """Run continuous polling loop."""
+async def run_loop(interval: int = 300) -> None:
+    """Run continuous polling loop.
+
+    Args:
+        interval: Seconds between poll cycles (default: 300)
+    """
     logger.info(
         "Auto-sync scheduler started (interval: %ds, max accounts: %d)",
-        POLL_INTERVAL,
+        interval,
         BATCH_SIZE,
     )
 
@@ -122,7 +126,7 @@ async def run_loop() -> None:
         except Exception as exc:
             logger.error("Auto-sync cycle failed: %s", exc)
 
-        await asyncio.sleep(POLL_INTERVAL)
+        await asyncio.sleep(interval)
 
 
 def main():
@@ -146,16 +150,16 @@ def main():
     from logging_config import setup_logging
     setup_logging()
 
-    global POLL_INTERVAL
-    POLL_INTERVAL = args.interval
+    # Update poll interval if specified
+    interval = args.interval
 
     if args.once:
         result = asyncio.run(sync_all_accounts())
         print(f"Synced {result['total_reports']} report(s) from {result['accounts_checked']} account(s)")
     else:
-        logger.info("Starting auto-sync scheduler (Ctrl+C to stop)")
+        logger.info("Starting auto-sync scheduler (interval: %ds, Ctrl+C to stop)", interval)
         try:
-            asyncio.run(run_loop())
+            asyncio.run(run_loop(interval))
         except KeyboardInterrupt:
             logger.info("Scheduler stopped")
 
