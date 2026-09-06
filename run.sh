@@ -41,23 +41,18 @@ python -m cli init-db
 python -m cli watch --directory "$DMARC_REPORTS_DIR" &
 WATCHER_PID=$!
 
-# ── Start email watcher (background, if configured) ──────────────────────────
-EMAIL_PID=""
-if [ -n "${EMAIL_USER:-}" ] || [ -n "${GMAIL_CREDENTIALS_FILE:-}" ]; then
-  echo "Starting email watcher..."
-  if [ -n "${GMAIL_CREDENTIALS_FILE:-}" ]; then
-    python -m automation.gmail_api --loop &
-    EMAIL_PID=$!
-  else
-    python -m automation.email_watcher --loop &
-    EMAIL_PID=$!
-  fi
+# ── Start auto-sync scheduler (background) ───────────────────────────────────
+SCHEDULER_PID=""
+if [ "${ENABLE_AUTO_SYNC:-true}" = "true" ]; then
+  echo "Starting auto-sync scheduler (every ${AUTO_SYNC_INTERVAL:-300}s)..."
+  python -m services.scheduler &
+  SCHEDULER_PID=$!
 fi
 
 cleanup() {
   echo "Shutting down..."
   kill "$WATCHER_PID" 2>/dev/null || true
-  [ -n "$EMAIL_PID" ] && kill "$EMAIL_PID" 2>/dev/null || true
+  [ -n "$SCHEDULER_PID" ] && kill "$SCHEDULER_PID" 2>/dev/null || true
 }
 trap cleanup EXIT INT TERM
 

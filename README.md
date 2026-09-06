@@ -109,7 +109,34 @@ CREATE TABLE dmarc_records (
    - `DMARC_SUPABASE_URL` = `https://xxxxx.supabase.co`
    - `DMARC_SUPABASE_SERVICE_ROLE_KEY` = your service_role key
 
-## Local development
+## Auto-sync (automatic email scanning)
+
+The scheduler runs in the background and polls all connected accounts.
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `ENABLE_AUTO_SYNC` | `true` | Enable background polling |
+| `AUTO_SYNC_INTERVAL` | `300` | Seconds between polls (5 min) |
+
+### How it works
+
+```
+Every 5 minutes (default):
+  1. Check all connected Gmail accounts
+  2. For each account, search for unread emails with attachments
+  3. Download attachments, verify content is valid DMARC XML
+  4. Save valid reports to Supabase
+  5. Track processed emails to avoid duplicates
+```
+
+### On Render
+
+Update your **Start Command**:
+```bash
+python -m services.scheduler & gunicorn wsgi:app -w 2 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:$PORT
+```
+
+### Local development
 
 ```bash
 ./run.sh
@@ -118,7 +145,7 @@ CREATE TABLE dmarc_records (
 Starts:
 - Dashboard at http://localhost:8000
 - Folder watcher (auto-ingest from `reports/` folder)
-- Email watcher (if `EMAIL_USER` or `GMAIL_CREDENTIALS_FILE` is set)
+- Auto-sync scheduler (polls Gmail every 5 min)
 
 ## What it does
 
