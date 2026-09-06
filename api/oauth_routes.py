@@ -103,6 +103,11 @@ async def oauth_callback(code: str = "", state: str = "", error: str = ""):
         )
 
         logger.info("Gmail account connected: %s", email)
+
+        # Trigger backfill in background (scan past 10 days)
+        import asyncio
+        asyncio.create_task(_trigger_backfill(account_id))
+
         return RedirectResponse(url="/?oauth_success=true")
 
     except Exception as exc:
@@ -134,8 +139,12 @@ async def list_oauth_accounts():
 
 
 @router.post("/accounts/{account_id}/sync")
-async def sync_account(account_id: int):
-    """Sync DMARC emails for a specific account."""
+async def sync_account(account_id: int, backfill: bool = False):
+    """Sync DMARC emails for a specific account.
+
+    Args:
+        backfill: If true, scan past 10 days of emails
+    """
     from services.gmail_sync import sync_account_emails
 
     account = get_account(account_id)
@@ -143,12 +152,32 @@ async def sync_account(account_id: int):
         raise HTTPException(status_code=404, detail="Account not found")
 
     try:
-        count = await sync_account_emails(account)
+        count = await sync_account_emails(account, backfill=backfill)
         update_sync_time(account_id, datetime.now(timezone.utc).isoformat())
-        return {"status": "ok", "reports_synced": count}
+        return {"status": "ok", "reports_synced": count, "backfill": backfill}
     except Exception as exc:
         logger.error("Sync failed for account %s: %s", account_id, exc)
         raise HTTPException(status_code=500, detail=f"Sync failed: {exc}")
+
+
+# ── Backfill (background task) ─────────────────────────────────────────────────
+
+
+async def _trigger_backfill(account_id: int) -> None:
+    """Trigger backfill for a new account (scan past 10 days)."""
+    from services.gmail_sync import sync_account_emails
+
+    account = get_account(account_id)
+    if not account:
+        return
+
+    try:
+        logger.info("[%s] Starting backfill (past 10 days)...", account.get("email"))
+        count = await sync_account_emails(account, backfill=True)
+        update_sync_time(account_id, datetime.now(timezone.utc).isoformat())
+        logger.info("[%s] Backfill complete: %d report(s)", account.get("email"), count)
+    except Exception as exc:
+        logger.error("[%s] Backfill failed: %s", account.get("email"), exc)
 
 
 # ── Disconnect account ────────────────────────────────────────────────────────

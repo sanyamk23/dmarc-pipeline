@@ -351,8 +351,9 @@ async function loadAccounts() {
             </div>
           </div>
           <div style="display: flex; gap: var(--sp-2);">
-            <button class="btn" style="font-size: 11px; padding: 4px 10px;" onclick="syncAccount(${acc.id})">Sync now</button>
-            <button class="btn btn-ghost" style="font-size: 11px; padding: 4px 10px;" onclick="disconnectAccount(${acc.id})">Disconnect</button>
+            <button class="btn" style="font-size: 11px; padding: 4px 10px;" onclick="syncAccount(${acc.id})">Sync</button>
+            <button class="btn btn-ghost" style="font-size: 11px; padding: 4px 10px;" onclick="backfillAccount(${acc.id})" title="Scan past 10 days">Backfill</button>
+            <button class="btn btn-ghost" style="font-size: 11px; padding: 4px 10px;" onclick="disconnectAccount(${acc.id})">✕</button>
           </div>
         </div>`;
     }
@@ -376,6 +377,18 @@ async function syncAccount(id) {
     await Promise.all([loadStats(), loadReports(), loadAccounts()]);
   } catch (e) {
     alert('Sync failed: ' + e.message);
+  }
+}
+
+async function backfillAccount(id) {
+  if (!confirm('Scan past 10 days of emails for DMARC reports? This may take a minute.')) return;
+  try {
+    const res = await fetch(`/oauth/accounts/${id}/sync?backfill=true`, { method: 'POST' });
+    const data = await res.json();
+    alert(`Backfill complete: ${data.reports_synced} report(s) found`);
+    await Promise.all([loadStats(), loadReports(), loadAccounts()]);
+  } catch (e) {
+    alert('Backfill failed: ' + e.message);
   }
 }
 

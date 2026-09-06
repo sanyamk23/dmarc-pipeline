@@ -66,9 +66,15 @@ async def sync_all_accounts() -> dict:
                         from models.accounts import update_token
                         update_token(account_id, token_json)
 
-            # Sync emails
-            count = await sync_account_emails(account)
+            # Check if this is a new account (never synced)
+            is_new_account = not account.get("last_sync")
+
+            # Sync emails (backfill for new accounts)
+            count = await sync_account_emails(account, backfill=is_new_account)
             results["total_reports"] += count
+
+            if is_new_account and count > 0:
+                logger.info("[%s] Backfill complete: %d historical report(s)", email, count)
 
             # Update last sync time
             from models.accounts import update_sync_time
