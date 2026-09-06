@@ -17,7 +17,7 @@ import json
 import logging
 from typing import Any, Optional
 
-from models import insert, select, update, delete
+from models import insert, select, select_single, update, delete
 
 logger = logging.getLogger("dmarc.accounts")
 
